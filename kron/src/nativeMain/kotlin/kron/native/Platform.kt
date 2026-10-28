@@ -1,12 +1,22 @@
 package kron
 
+import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
+import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.toKString
+import kotlinx.cinterop.usePinned
 import kotlin.native.concurrent.ThreadLocal
 import kotlin.time.TimeSource
+import platform.posix.EINTR
+import platform.posix.O_CLOEXEC
+import platform.posix.O_RDONLY
+import platform.posix.close
+import platform.posix.errno
 import platform.posix.fputs
+import platform.posix.open
+import platform.posix.read
 import platform.posix.sched_yield
 import platform.posix.stderr
 import platform.posix.uname
@@ -72,3 +82,45 @@ internal object Clock {
 
 /** An I/O failure surfaced to a caller, as java.io.IOException is on the JVM. */
 open class IOException(message: String? = null, cause: Throwable? = null) : Exception(message, cause)
+
+/**
+ * The whole file at [path], or null when it cannot be opened or read. Buffers it outgrows are zeroed, as the bytes
+ * may be a private key.
+ */
+internal fun readFileBytes(path: String): ByteArray? {
+    val fd = open(path, O_RDONLY or O_CLOEXEC)
+    if (fd < 0) {
+        return null
+    }
+
+    try {
+        var bytes = ByteArray(4096)
+        var length = 0
+        while (true) {
+            if (length == bytes.size) {
+                val grown = bytes.copyOf(bytes.size * 2)
+                bytes.fill(0)
+                bytes = grown
+            }
+
+            val buffer = bytes
+            val n = buffer.usePinned { read(fd, it.addressOf(length), (buffer.size - length).convert()) }
+            if (n < 0) {
+                if (errno == EINTR) {
+                    continue
+                }
+
+                bytes.fill(0)
+                return null
+            }
+
+            if (n == 0L) {
+                return bytes.copyOf(length).also { bytes.fill(0) }
+            }
+
+            length += n.toInt()
+        }
+    } finally {
+        close(fd)
+    }
+}
