@@ -34,12 +34,17 @@ class TcpConnectionTest {
         TestServer(testConfig(), ::echo).use { server ->
             val clients = List(64) { server.connect() }
             try {
-                clients.forEachIndexed { i, c -> c.write("client $i") }
+                clients.forEachIndexed { i, c ->
+                    c.write("client $i")
+                }
+
                 clients.forEachIndexed { i, c ->
                     assertEquals("client $i", c.readBytes("client $i".length).decodeToString())
                 }
             } finally {
-                clients.forEach { it.close() }
+                clients.forEach {
+                    it.close()
+                }
             }
         }
     }
@@ -53,11 +58,13 @@ class TcpConnectionTest {
                 conn.write(body)
                 conn.flush()
             }
+
             TestServer(testConfig(TcpOptions(port = 0, sendWaitAll = waitAll)), handler).use { server ->
                 TestSocket().use { client ->
                     client.setReceiveBuffer(4096)   // the send backs up, so without WAITALL it completes short
                     client.setReceiveTimeout(10_000)
                     client.connect(server.port)
+
                     client.write("go")
                     assertContentEquals(body, client.readBytes(body.size), "sendWaitAll = $waitAll")
                 }
@@ -74,21 +81,32 @@ class TcpConnectionTest {
             val held = ArrayList<Int>()
             val item = RecvItem()
             var received = 0
+
             while (received < total) {
                 val snapshot = conn.read()
                 while (conn.tryGetItem(snapshot, item)) {
-                    if (item.hasBuffer) held.add(item.bufferId)
+                    if (item.hasBuffer) {
+                        held.add(item.bufferId)
+                    }
                     received += item.length
                 }
+
                 if (held.size >= 4 || received >= total) {
-                    for (bid in held) conn.returnBuffer(bid)
+                    for (bid in held) {
+                        conn.returnBuffer(bid)
+                    }
                     held.clear()
                 }
-                if (snapshot.isClosed) break
+
+                if (snapshot.isClosed) {
+                    break
+                }
             }
+
             conn.write("$received".encodeToByteArray())
             conn.flush()
         }
+
         TestServer(testConfig(recvSlots = 4, recvBufferSize = 4096), handler).use { server ->
             server.connect(receiveTimeoutMs = 10_000).use { client ->
                 client.write(pattern(total))
@@ -107,20 +125,27 @@ class TcpConnectionTest {
             RingTimer(conn.reactor).delay(150)
             val item = RecvItem()
             var snapshot = conn.read()
+
             if (snapshot.isClosed && conn.recvOverflowed) {
                 overflowed.addAndFetch(1)
             } else {
                 while (true) {
                     while (conn.tryGetItem(snapshot, item)) {
-                        if (item.hasBuffer) conn.write(item.address, item.length)
+                        if (item.hasBuffer) {
+                            conn.write(item.address, item.length)
+                        }
                         conn.returnBuffer(item)
                     }
+
                     conn.flush()
-                    if (snapshot.isClosed) break
+                    if (snapshot.isClosed) {
+                        break
+                    }
                     snapshot = conn.read()
                 }
             }
         }
+
         val config = testConfig(TcpOptions(port = 0, recvQueueEntries = 2), recvSlots = 8, recvBufferSize = 4096)
         TestServer(config, handler).use { server ->
             repeat(8) { round ->
@@ -129,9 +154,15 @@ class TcpConnectionTest {
                         client.write("chunk $it")
                         sleepMs(20)   // each its own completion
                     }
-                    assertEquals(-1, runCatching { client.read() }.getOrDefault(-1), "round $round: the connection stayed open")
+
+                    assertEquals(
+                        -1,
+                        runCatching { client.read() }.getOrDefault(-1),
+                        "round $round: the connection stayed open",
+                    )
                 }
             }
+
             assertEquals(8, overflowed.load(), "rounds that saw the overflow")
 
             server.connect().use { client ->
@@ -156,10 +187,15 @@ class TcpConnectionTest {
             conn.disableReadTimeout()
             echo(conn)
         }
+
         TestServer(testConfig(TcpOptions(port = 0, readTimeoutMs = 300)), optedOut).use { server ->
             server.connect(receiveTimeoutMs = 1_000).use { client ->
                 val timedOut = runCatching { client.read() }.exceptionOrNull()
-                assertTrue(timedOut is IOException, "the opted-out connection was closed: ${timedOut ?: "read returned"}")
+                assertTrue(
+                    timedOut is IOException,
+                    "the opted-out connection was closed: ${timedOut ?: "read returned"}",
+                )
+
                 client.write("x")
                 assertEquals("x", client.readBytes(1).decodeToString())
             }
@@ -173,20 +209,28 @@ class TcpConnectionTest {
         val handler: suspend (TcpConnection) -> Unit = { conn ->
             conn.read()
             conn.write(ByteArray(64 * 1024 * 1024))
+
             val start = Clock.monotonicMs()
             conn.flush()
             flushReturnedAfter.store(Clock.monotonicMs() - start)
-            if (conn.isClosed) closedAfterFlush.store(1)
+            if (conn.isClosed) {
+                closedAfterFlush.store(1)
+            }
         }
+
         TestServer(testConfig(TcpOptions(port = 0, sendTimeoutMs = 300)), handler).use { server ->
             TestSocket().use { client ->
                 client.setReceiveBuffer(4096)
                 client.connect(server.port)
                 client.write("go")   // and never read
+
                 val deadline = Clock.monotonicMs() + 5_000
-                while (flushReturnedAfter.load() < 0 && Clock.monotonicMs() < deadline) sleepMs(10)
+                while (flushReturnedAfter.load() < 0 && Clock.monotonicMs() < deadline) {
+                    sleepMs(10)
+                }
             }
         }
+
         val after = flushReturnedAfter.load()
         assertTrue(after in 250..3_000, "the stalled flush returned after $after ms, for a 300 ms timeout")
         assertEquals(1, closedAfterFlush.load(), "the flush returned with the connection still open")
@@ -196,33 +240,45 @@ class TcpConnectionTest {
     fun `calls made off the reactor thread are carried to it`() {
         val threads = TestThreads()
         val seen = AtomicReference("")
+
         // Raw, so the handler always continues on the new thread: a safe continuation resumed before it suspends
         // would carry on synchronously where it was.
         suspend fun hop(): Unit = suspendCoroutineUninterceptedOrReturn { cont ->
-            threads.start { cont.resume(Unit) }
+            threads.start {
+                cont.resume(Unit)
+            }
+
             COROUTINE_SUSPENDED
         }
+
         val handler: suspend (TcpConnection) -> Unit = { conn ->
             val trail = StringBuilder()
             val item = RecvItem()
+
             hop()
             trail.append(if (conn.reactor.onReactorThread) "R" else "o")
             val snapshot = conn.read()   // posted to the reactor; resumes there
             trail.append(if (conn.reactor.onReactorThread) "R" else "o")
+
             val bytes = StringBuilder()
             while (conn.tryGetItem(snapshot, item)) {
-                for (i in 0 until item.length) bytes.append(item[i].toInt().toChar())
+                for (i in 0 until item.length) {
+                    bytes.append(item[i].toInt().toChar())
+                }
                 conn.returnBuffer(item)
             }
+
             hop()
             trail.append(if (conn.reactor.onReactorThread) "R" else "o")
             conn.write(bytes.toString().encodeToByteArray())
             conn.flush()   // posted; resumes on the reactor once the kernel has the bytes
             trail.append(if (conn.reactor.onReactorThread) "R" else "o")
+
             hop()
             seen.store(trail.toString())
             conn.decRef()   // posted
         }
+
         try {
             TestServer(testConfig(), handler).use { server ->
                 server.connect().use { client ->
@@ -234,6 +290,7 @@ class TcpConnectionTest {
         } finally {
             threads.joinAll()
         }
+
         assertEquals("oRoR", seen.load(), "thread before and after read, write and flush (o = off, R = reactor)")
     }
 
@@ -248,20 +305,29 @@ class TcpConnectionTest {
                 while (true) {
                     val result = pipe.input.read()
                     var consumed = 0L
+
                     while (true) {
                         val at = result.buffer.indexOf(end, consumed)
-                        if (at < 0) break
+                        if (at < 0) {
+                            break
+                        }
                         consumed = at + end.size
                         pipe.output.write(response)
                     }
-                    if (pipe.output.unflushedBytes > 0) pipe.output.flush()
+
+                    if (pipe.output.unflushedBytes > 0) {
+                        pipe.output.flush()
+                    }
                     pipe.input.advanceTo(consumed, result.buffer.length)
-                    if (result.isCompleted) break
+                    if (result.isCompleted) {
+                        break
+                    }
                 }
             } finally {
                 pipe.input.complete()
             }
         }
+
         TestServer(testConfig(), handler).use { server ->
             server.connect().use { client ->
                 // One request in three fragments: a single response, once the last one lands.
@@ -284,32 +350,50 @@ class TcpConnectionTest {
         val afterFin = AtomicReference("")
         val handler: suspend (TcpConnection) -> Unit = { conn ->
             val item = RecvItem()
-            conn.read().let { s -> while (conn.tryGetItem(s, item)) conn.returnBuffer(item) }
+            conn.read().let { s ->
+                while (conn.tryGetItem(s, item)) {
+                    conn.returnBuffer(item)
+                }
+            }
+
             conn.write("bye".encodeToByteArray())
             conn.flush()
             conn.shutdownWrite()
+
             val more = StringBuilder()
             while (true) {
                 val snapshot = conn.read()
                 while (conn.tryGetItem(snapshot, item)) {
-                    for (i in 0 until item.length) more.append(item[i].toInt().toChar())
+                    for (i in 0 until item.length) {
+                        more.append(item[i].toInt().toChar())
+                    }
                     conn.returnBuffer(item)
                 }
-                if (snapshot.isClosed) break
+
+                if (snapshot.isClosed) {
+                    break
+                }
             }
+
             afterFin.store(more.toString())
         }
+
         TestServer(testConfig(), handler).use { server ->
             server.connect().use { client ->
                 client.write("hello")
                 assertEquals("bye", client.readBytes(3).decodeToString())
                 assertEquals(-1, client.read(), "no FIN after the response")
+
                 client.write("more")
                 client.shutdownOutput()
+
                 val deadline = Clock.monotonicMs() + 5_000
-                while (afterFin.load().isEmpty() && Clock.monotonicMs() < deadline) sleepMs(5)
+                while (afterFin.load().isEmpty() && Clock.monotonicMs() < deadline) {
+                    sleepMs(5)
+                }
             }
         }
+
         assertEquals("more", afterFin.load(), "what the handler read after its FIN")
     }
 
@@ -320,16 +404,20 @@ class TcpConnectionTest {
             conn.read()
             conn.write("x".encodeToByteArray())
             conn.flush()
+
             conn.decRef()
             RingTimer(conn.reactor).delay(500)   // still running when the peer sees the FIN
             handlerReturned.store(1)
         }
+
         TestServer(testConfig(), handler).use { server ->
             server.connect().use { client ->
                 client.write("go")
                 assertEquals("x", client.readBytes(1).decodeToString())
                 assertEquals(-1, client.read(), "no FIN after decRef")
-                if (handlerReturned.load() != 0) fail("the FIN waited for the handler to return")
+                if (handlerReturned.load() != 0) {
+                    fail("the FIN waited for the handler to return")
+                }
             }
         }
     }

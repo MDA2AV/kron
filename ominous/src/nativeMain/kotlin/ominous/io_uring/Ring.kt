@@ -48,11 +48,16 @@ internal class Ring private constructor(
     /** The next free SQE's address, or 0 when the SQ is full. */
     fun getSqe(): Long {
         val head = getIntAcquire(sqHead)
-        if (sqeTail - head >= sqEntries) return 0L
+        if (sqeTail - head >= sqEntries) {
+            return 0L
+        }
 
         val slot = sqeTail and sqMask
-        if (hasSqArray) putInt(sqArray + slot * 4L, slot)
+        if (hasSqArray) {
+            putInt(sqArray + slot * 4L, slot)
+        }
         sqeTail++
+
         return sqesPtr + slot.toLong() * IoUring.SQE_SIZE
     }
 
@@ -70,9 +75,13 @@ internal class Ring private constructor(
         val khead = getIntAcquire(sqHead)
         val toSubmit = sqeTail - khead
 
-        if (sqeTail != getInt(sqTail)) putIntRelease(sqTail, sqeTail)
+        if (sqeTail != getInt(sqTail)) {
+            putIntRelease(sqTail, sqeTail)
+        }
 
-        if (toSubmit == 0 && waitFor == 0) return 0
+        if (toSubmit == 0 && waitFor == 0) {
+            return 0
+        }
 
         val flags = (if (waitFor > 0) ENTER_GETEVENTS else 0) or enterFlags
 
@@ -86,7 +95,10 @@ internal class Ring private constructor(
         putLong(geteventsArg, 0L)
         putLong(geteventsArg + 8, 0L)
         putLong(geteventsArg + 16, timespec)
-        return Native.ioUringEnter(enterFd, toSubmit, waitFor, flags or ENTER_EXT_ARG, geteventsArg, IoUring.GETEVENTS_ARG_SIZE)
+
+        return Native.ioUringEnter(
+            enterFd, toSubmit, waitFor, flags or ENTER_EXT_ARG, geteventsArg, IoUring.GETEVENTS_ARG_SIZE
+        )
     }
 
     // Batched CQ drain (liburing io_uring_for_each_cqe + io_uring_cq_advance): read the kernel-written tail
@@ -112,6 +124,7 @@ internal class Ring private constructor(
         putInt(update, -1)          // offset: any free slot, the kernel writes back which
         putInt(update + 4, 0)
         putLong(update + 8, fd.toLong())
+
         if (Native.ioUringRegister(fd, IoUring.REGISTER_RING_FDS, update, 1) == 1) {
             enterFd = getInt(update)
             enterFlags = ENTER_REGISTERED_RING
@@ -125,7 +138,9 @@ internal class Ring private constructor(
     }
 
     override fun close() {
-        if (closed) return
+        if (closed) {
+            return
+        }
         closed = true
 
         Native.munmap(ringPtr, ringSize)
@@ -139,12 +154,15 @@ internal class Ring private constructor(
             putInt(update, enterFd)
             putInt(update + 4, 0)
             putLong(update + 8, 0L)
+
             Native.ioUringRegister(fd, IoUring.UNREGISTER_RING_FDS, update, 1)
             enterFlags = 0
             enterFd = fd
         }
 
-        if (closeFd) Native.close(fd)
+        if (closeFd) {
+            Native.close(fd)
+        }
         Native.free(scratch)
     }
 
@@ -171,7 +189,10 @@ internal class Ring private constructor(
                     fd = setupWithMemlockRetry(entries, params, cqEntries,
                         IoUring.SETUP_SINGLE_ISSUER or IoUring.SETUP_DEFER_TASKRUN)
                 }
-                if (fd < 0) throw IllegalStateException(describeSetupFailure(-fd, entries, kernelRelease()))
+
+                if (fd < 0) {
+                    throw IllegalStateException(describeSetupFailure(-fd, entries, kernelRelease()))
+                }
 
                 return map(fd, params, hasSqArray)
             } finally {
@@ -248,18 +269,21 @@ internal class Ring private constructor(
                     putInt(params + IoUring.P_CQ_ENTRIES, cqEntries)
                 }
                 putInt(params + IoUring.P_FLAGS, flags)
+
                 return Native.ioUringSetup(entries, params)
             }
 
             var fd = attempt()
             var delay = 5L
             var tries = 1
+
             while (fd == -Native.ENOMEM && tries < 6) {
                 sleepMs(delay)
                 fd = attempt()
                 delay *= 2
                 tries++
             }
+
             return fd
         }
 
@@ -269,9 +293,12 @@ internal class Ring private constructor(
         // A failed setup in terms a host can act on: a bare "errno 22" sends people to limits and permissions
         // first, when the usual cause is a kernel older than the setup flags.
         internal fun describeSetupFailure(errno: Int, entries: Int, kernelRelease: String): String {
-            val failed = "io_uring_setup failed with errno $errno for a ring of $entries entries on Linux $kernelRelease"
+            val failed =
+                "io_uring_setup failed with errno $errno for a ring of $entries entries on Linux $kernelRelease"
+
             return when {
-                errno == Native.EINVAL && entries > 32768 -> "$failed: the kernel allows at most 32768 (ServerConfig.ringEntries)."
+                errno == Native.EINVAL && entries > 32768 ->
+                    "$failed: the kernel allows at most 32768 (ServerConfig.ringEntries)."
                 errno == Native.EINVAL && kernelOlderThan(kernelRelease, 6, 1) ->
                     "$failed: the kernel does not know SINGLE_ISSUER | DEFER_TASKRUN, and ominous needs Linux 6.1 or later."
                 errno == Native.ENOMEM ->
@@ -289,7 +316,10 @@ internal class Ring private constructor(
         // "5.15.167.4-microsoft-standard-WSL2" is older than 6.1; "6.14.0-37-generic" is not.
         internal fun kernelOlderThan(release: String, major: Int, minor: Int): Boolean {
             val parts = release.split('.', '-')
-            if (parts.size < 2) return false
+            if (parts.size < 2) {
+                return false
+            }
+
             val a = parts[0].toIntOrNull() ?: return false
             val b = parts[1].toIntOrNull() ?: return false
             return a < major || (a == major && b < minor)

@@ -38,24 +38,34 @@ object TcpRaw {
         )
 
         // One pre-encoded response, written for every request. PLAYGROUND_BODY sizes the body (2 = "ok").
-        val body = if (bodyBytes == 2) "ok".encodeToByteArray() else ByteArray(bodyBytes) { if (it == bodyBytes - 1) '\n'.code.toByte() else 'x'.code.toByte() }
-        val response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ${body.size}\r\n\r\n".encodeToByteArray() + body
+        val body = if (bodyBytes == 2) {
+            "ok".encodeToByteArray()
+        } else {
+            ByteArray(bodyBytes) { if (it == bodyBytes - 1) '\n'.code.toByte() else 'x'.code.toByte() }
+        }
+        val response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ${body.size}\r\n\r\n"
+            .encodeToByteArray() + body
 
         // The handler. It runs on the reactor thread and every suspension resumes right back on it.
         suspend fun handle(conn: TcpConnection) {
             val item = RecvItem()
+
             while (true) {
                 // io_uring recv. The continuation resumes inline on this thread - no thread pool.
                 val snapshot = conn.read()
 
                 // ominous hands you raw bytes and stays out of HTTP: this sample returns every buffer unread.
-                while (conn.tryGetItem(snapshot, item)) conn.returnBuffer(item)
+                while (conn.tryGetItem(snapshot, item)) {
+                    conn.returnBuffer(item)
+                }
 
                 // Stage into the connection's write slab, then one io_uring send.
                 conn.write(response)
                 conn.flush()
 
-                if (snapshot.isClosed) return   // peer went away
+                if (snapshot.isClosed) {
+                    return   // peer went away
+                }
             }
         }
 

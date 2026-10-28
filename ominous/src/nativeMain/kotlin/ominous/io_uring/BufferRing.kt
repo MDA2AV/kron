@@ -42,18 +42,23 @@ internal class BufferRing(
             putInt(reg + 8, entries)
             putShort(reg + 12, bgid.toShort())
             putShort(reg + 14, (if (incremental) IoUring.IOU_PBUF_RING_INC else 0).toShort())
+
             val rc = Native.ioUringRegister(ring.fd, IoUring.REGISTER_PBUF_RING, reg, 1)
             if (rc < 0) {
                 Native.free(ringAddr)
                 Native.free(slab)
-                throw IllegalStateException("IORING_REGISTER_PBUF_RING failed with errno ${-rc} (bgid $bgid, $entries entries)")
+                throw IllegalStateException(
+                    "IORING_REGISTER_PBUF_RING failed with errno ${-rc} (bgid $bgid, $entries entries)"
+                )
             }
             registered = true
         } finally {
             Native.free(reg)
         }
 
-        for (bid in 0 until entries) add(bid)
+        for (bid in 0 until entries) {
+            add(bid)
+        }
         publish()
     }
 
@@ -77,11 +82,15 @@ internal class BufferRing(
      * unregistering is synchronous, closing is not (io_uring_release defers to a workqueue).
      */
     fun unregister() {
-        if (!registered) return
+        if (!registered) {
+            return
+        }
         registered = false
+
         val reg = Native.malloc(IoUring.BUF_REG_SIZE)
         zeroMemory(reg, IoUring.BUF_REG_SIZE)
         putShort(reg + 12, bgid.toShort())
+
         Native.ioUringRegister(ring.fd, IoUring.UNREGISTER_PBUF_RING, reg, 1)
         Native.free(reg)
     }

@@ -22,16 +22,28 @@ object TcpPipe {
             ringEntries = 8192,
             recvBufferSize = 32 * 1024,
             recvSlots = 4096,
-            tcp = TcpOptions(port = port, listenBacklog = 1024, writeSlabSize = 16 * 1024, poolMax = 1024, recvQueueEntries = 64),
+            tcp = TcpOptions(
+                port = port,
+                listenBacklog = 1024,
+                writeSlabSize = 16 * 1024,
+                poolMax = 1024,
+                recvQueueEntries = 64
+            ),
         )
 
-        val body = if (bodyBytes == 2) "ok".encodeToByteArray() else ByteArray(bodyBytes) { if (it == bodyBytes - 1) '\n'.code.toByte() else 'x'.code.toByte() }
-        val response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ${body.size}\r\n\r\n".encodeToByteArray() + body
+        val body = if (bodyBytes == 2) {
+            "ok".encodeToByteArray()
+        } else {
+            ByteArray(bodyBytes) { if (it == bodyBytes - 1) '\n'.code.toByte() else 'x'.code.toByte() }
+        }
+        val response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ${body.size}\r\n\r\n"
+            .encodeToByteArray() + body
 
         suspend fun handle(conn: TcpConnection) {
             val pipe = TcpDuplexPipe(conn)
             val reader = pipe.input
             val writer = pipe.output
+
             try {
                 while (true) {
                     val result = reader.read()
@@ -40,7 +52,9 @@ object TcpPipe {
                     writer.write(response)
                     writer.flush()
 
-                    if (result.isCompleted) return
+                    if (result.isCompleted) {
+                        return
+                    }
                 }
             } finally {
                 reader.complete()

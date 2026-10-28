@@ -56,7 +56,10 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
     }
 
     override suspend fun read(): ReadResult {
-        if (!connection.reactor.onReactorThread) return readOffReactor()
+        if (!connection.reactor.onReactorThread) {
+            return readOffReactor()
+        }
+
         return suspendCoroutineUninterceptedOrReturn { readOrPark(it) }
     }
 
@@ -69,7 +72,9 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
         }
 
         // Unexamined bytes, or a closed connection, complete at once.
-        if (heldBytes > examinedBytes || connectionClosed) return syncResult()
+        if (heldBytes > examinedBytes || connectionClosed) {
+            return syncResult()
+        }
 
         // Everything held was examined: wait for new bytes.
         while (true) {
@@ -78,13 +83,19 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
                 waiter = cont
                 return COROUTINE_SUSPENDED
             }
-            if (ingest(r as RecvSnapshot) || connectionClosed || cancelRequested) return syncResult()
+
+            if (ingest(r as RecvSnapshot) || connectionClosed || cancelRequested) {
+                return syncResult()
+            }
             // A wake with nothing new: arm again.
         }
     }
 
     private fun syncResult(): ReadResult {
-        if (lostToOverflow) throw overflowError()
+        if (lostToOverflow) {
+            throw overflowError()
+        }
+
         val canceled = cancelRequested
         cancelRequested = false
         return build(canceled)
@@ -94,7 +105,9 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
         connection.reactor.post {
             try {
                 val r = readOrPark(cont)
-                if (r !== COROUTINE_SUSPENDED) cont.resume(r as ReadResult)
+                if (r !== COROUTINE_SUSPENDED) {
+                    cont.resume(r as ReadResult)
+                }
             } catch (e: Throwable) {
                 cont.resumeWithException(e)
             }
@@ -107,8 +120,13 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
             // Nothing new: re-arm without completing the caller.
             while (true) {
                 val r = connection.readOrPark(recvReady)
-                if (r === COROUTINE_SUSPENDED) return
-                if (ingest(r as RecvSnapshot) || connectionClosed || cancelRequested) break
+                if (r === COROUTINE_SUSPENDED) {
+                    return
+                }
+
+                if (ingest(r as RecvSnapshot) || connectionClosed || cancelRequested) {
+                    break
+                }
             }
         }
 
@@ -119,6 +137,7 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
             cont.resumeWithException(overflowError())
             return
         }
+
         val canceled = cancelRequested
         cancelRequested = false
         cont.resume(build(canceled))
@@ -128,12 +147,19 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
     private fun ingest(snapshot: RecvSnapshot): Boolean {
         var any = false
         while (connection.tryGetItem(snapshot, item)) {
-            if (!item.hasBuffer) continue
+            if (!item.hasBuffer) {
+                continue
+            }
+
             chain.add(item.address, item.length, item.bufferId)
             heldBytes += item.length
             any = true
         }
-        if (snapshot.isClosed) connectionClosed = true
+
+        if (snapshot.isClosed) {
+            connectionClosed = true
+        }
+
         return any
     }
 
@@ -144,11 +170,16 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
 
     override fun tryRead(): ReadResult? {
         check(!completed) { "Reading is not allowed after the reader was completed." }
+
         if (cancelRequested) {
             cancelRequested = false
             return build(canceled = true)
         }
-        if (heldBytes > examinedBytes || connectionClosed) return syncResult()
+
+        if (heldBytes > examinedBytes || connectionClosed) {
+            return syncResult()
+        }
+
         return null
     }
 
@@ -180,7 +211,10 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
     }
 
     override fun complete() {
-        if (completed) return
+        if (completed) {
+            return
+        }
+
         completed = true
         releaseHeldBuffers()
     }
@@ -194,7 +228,11 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
     override fun releaseHeldBuffers() {
         completed = true
         connectionClosed = true
-        while (chain.count > 0) connection.returnBuffer(chain.removeHead())
+
+        while (chain.count > 0) {
+            connection.returnBuffer(chain.removeHead())
+        }
+
         heldBytes = 0
         examinedBytes = 0
         buffer.clear()
@@ -227,7 +265,6 @@ class TcpPipeWriter(private val connection: TcpConnection) : PipeWriter {
 
     override fun getBuffer(sizeHint: Int): Long = connection.getBuffer(sizeHint)
 
-
     override fun advance(count: Int) {
         connection.advance(count)
         unflushedBytes += count
@@ -239,7 +276,10 @@ class TcpPipeWriter(private val connection: TcpConnection) : PipeWriter {
     }
 
     override suspend fun flush(): FlushResult {
-        if (!connection.reactor.onReactorThread) return flushOffReactor()
+        if (!connection.reactor.onReactorThread) {
+            return flushOffReactor()
+        }
+
         return suspendCoroutineUninterceptedOrReturn { flushOrPark(it) }
     }
 
@@ -254,6 +294,7 @@ class TcpPipeWriter(private val connection: TcpConnection) : PipeWriter {
             waiter = cont
             return COROUTINE_SUSPENDED
         }
+
         return FlushResult.of(canceled = false, completed = completed || connection.isClosed)
     }
 
@@ -261,7 +302,9 @@ class TcpPipeWriter(private val connection: TcpConnection) : PipeWriter {
         connection.reactor.post {
             try {
                 val r = flushOrPark(cont)
-                if (r !== COROUTINE_SUSPENDED) cont.resume(r as FlushResult)
+                if (r !== COROUTINE_SUSPENDED) {
+                    cont.resume(r as FlushResult)
+                }
             } catch (e: Throwable) {
                 cont.resumeWithException(e)
             }
@@ -273,6 +316,7 @@ class TcpPipeWriter(private val connection: TcpConnection) : PipeWriter {
     private fun onFlushDone() {
         val cont = waiter ?: return
         waiter = null
+
         val canceled = cancelRequested
         cancelRequested = false
         cont.resume(FlushResult.of(canceled, completed || connection.isClosed))

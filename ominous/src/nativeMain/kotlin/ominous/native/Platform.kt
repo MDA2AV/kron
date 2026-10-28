@@ -40,11 +40,15 @@ internal fun kernelRelease(): String = memScoped {
 }
 
 internal fun checkIndex(index: Int, length: Int) {
-    if (index < 0 || index >= length) throw IndexOutOfBoundsException("Index $index out of bounds for length $length")
+    if (index < 0 || index >= length) {
+        throw IndexOutOfBoundsException("Index $index out of bounds for length $length")
+    }
 }
 
 internal fun checkIndex(index: Long, length: Long) {
-    if (index < 0 || index >= length) throw IndexOutOfBoundsException("Index $index out of bounds for length $length")
+    if (index < 0 || index >= length) {
+        throw IndexOutOfBoundsException("Index $index out of bounds for length $length")
+    }
 }
 
 internal fun checkFromIndexSize(fromIndex: Int, size: Int, length: Int) {

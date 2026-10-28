@@ -31,7 +31,10 @@ class RingTimer(private val reactor: Reactor) {
 
     /** As [delay], in nanoseconds; at or below zero waits the shortest time the kernel takes. */
     suspend fun delayNanoseconds(nanoseconds: Long): Int {
-        if (!reactor.onReactorThread) return delayOffReactor(nanoseconds)
+        if (!reactor.onReactorThread) {
+            return delayOffReactor(nanoseconds)
+        }
+
         return suspendCoroutineUninterceptedOrReturn { cont ->
             check(waiter == null) { "RingTimer already waiting" }
             waiter = cont

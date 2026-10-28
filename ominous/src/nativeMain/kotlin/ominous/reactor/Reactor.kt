@@ -46,10 +46,15 @@ class Reactor(val id: Int, private val config: ServerConfig) {
     init {
         require(config.ringEntries > 0) { "ringEntries must be positive" }
         require(config.opSlots > 0) { "opSlots must be positive" }
+
         if (tcpOptions != null) {
-            require(isPow2(tcpOptions.recvQueueEntries)) { "tcp.recvQueueEntries (${tcpOptions.recvQueueEntries}) must be a power of two" }
+            require(isPow2(tcpOptions.recvQueueEntries)) {
+                "tcp.recvQueueEntries (${tcpOptions.recvQueueEntries}) must be a power of two"
+            }
             require(tcpOptions.writeSlabSize > 0) { "tcp.writeSlabSize must be positive" }
-            require(isPow2(config.recvSlots) && config.recvSlots <= 32768) { "recvSlots (${config.recvSlots}) must be a power of two up to 32768" }
+            require(isPow2(config.recvSlots) && config.recvSlots <= 32768) {
+                "recvSlots (${config.recvSlots}) must be a power of two up to 32768"
+            }
             require(config.recvBufferSize > 0) { "recvBufferSize must be positive" }
         }
     }
@@ -101,7 +106,11 @@ class Reactor(val id: Int, private val config: ServerConfig) {
             armWakePoll()
 
             // After onStart, so a reactor that serves no TCP registers nothing.
-            if (tcp != null) addTicker { tcp.sweep() }
+            if (tcp != null) {
+                addTicker {
+                    tcp.sweep()
+                }
+            }
 
             nowMs = Clock.monotonicMs()
             nextTickMs = nowMs + TICK_MS
@@ -122,19 +131,24 @@ class Reactor(val id: Int, private val config: ServerConfig) {
      */
     fun stop() {
         stopRequested = true
+
         // The flag alone is seen only on the next pass; the write wakes a loop parked in the kernel.
         wakeFdWrite()
     }
 
     private fun announceListening() {
         val ports = tcp?.listenPorts
-        printErr("[r$id] listening on " + (if (ports != null && ports.isNotEmpty()) "0.0.0.0:${ports.joinToString(",")}" else "(no tcp)"))
+        printErr(
+            "[r$id] listening on " +
+                (if (ports != null && ports.isNotEmpty()) "0.0.0.0:${ports.joinToString(",")}" else "(no tcp)")
+        )
     }
 
     // ---- Loop -------------------------------------------------------------------------------------------
 
     private fun loop() {
         val tcp = tcp
+
         while (!stopRequested) {
             clearWakePending()
             tcp?.drainReturnQ()
@@ -146,7 +160,9 @@ class Reactor(val id: Int, private val config: ServerConfig) {
             // a lifecycle or programming error, and a reactor that silently vanishes is the worst outcome.
             val rc = waitForCompletions()
             if (rc < 0 && rc != -Native.EINTR && rc != -Native.EAGAIN && rc != -Native.EBUSY && rc != -Native.ETIME) {
-                throw IllegalStateException("[r$id] io_uring_enter failed with errno ${-rc}; this reactor cannot continue")
+                throw IllegalStateException(
+                    "[r$id] io_uring_enter failed with errno ${-rc}; this reactor cannot continue"
+                )
             }
 
             nowMs = Clock.monotonicMs()   // one read per batch
@@ -166,6 +182,7 @@ class Reactor(val id: Int, private val config: ServerConfig) {
     private fun dispatch(userData: Long, res: Int, flags: Int) {
         val fd = userData.toInt()
         val gen = (userData ushr 32).toInt() and 0xFFFF
+
         when ((userData ushr 56).toInt()) {
             KIND_TCP_RECV -> tcp!!.onRecv(fd, gen, res, flags)
             KIND_TCP_SEND -> tcp!!.onSend(fd, gen, res)
@@ -184,7 +201,9 @@ class Reactor(val id: Int, private val config: ServerConfig) {
     /** The SQE to fill next; when the SQ is full, what is queued goes to the kernel first. Reactor thread. */
     internal fun getSqeOrFlush(): Long {
         var sqe = ring.getSqe()
-        if (sqe != 0L) return sqe
+        if (sqe != 0L) {
+            return sqe
+        }
 
         // A few rounds clear the transient fullness a large CQE batch causes; only a stuck ring falls through.
         var attempt = 0
@@ -193,6 +212,7 @@ class Reactor(val id: Int, private val config: ServerConfig) {
             sqe = ring.getSqe()
             attempt++
         }
+
         check(sqe != 0L) { "io_uring SQ still full after repeated flush" }
         return sqe
     }
@@ -204,6 +224,7 @@ class Reactor(val id: Int, private val config: ServerConfig) {
             conn.releaseHandlerRef(conn.generation)
             return
         }
+
         handler.startCoroutine(conn, HandlerCompletion(conn, conn.generation, handlerContext))
     }
 
@@ -216,6 +237,7 @@ class Reactor(val id: Int, private val config: ServerConfig) {
             result.exceptionOrNull()?.let {
                 printErr("[r$id] connection handler faulted: ${it.stackTraceToString()}")
             }
+
             conn.releaseHandlerRef(lifeGeneration)
         }
     }
@@ -239,6 +261,7 @@ class Reactor(val id: Int, private val config: ServerConfig) {
     private fun openWakeFd() {
         wakeBuffers = Native.malloc(16)
         putLong(wakeBuffers, 1L)
+
         val fd = Native.eventfd(0, Native.EFD_NONBLOCK or Native.EFD_CLOEXEC)
         check(fd >= 0) { "eventfd failed with errno ${-fd}" }
         wakeFd.store(fd)
@@ -246,18 +269,26 @@ class Reactor(val id: Int, private val config: ServerConfig) {
 
     private fun armWakePoll() {
         val fd = wakeFd.load()
-        IoUring.prep(getSqeOrFlush(), IoUring.OP_POLL_ADD, fd, 0L, IoUring.POLL_ADD_MULTI, 0L, tag(KIND_WAKE, 0, fd), opFlags = IoUring.POLLIN)
+        IoUring.prep(
+            getSqeOrFlush(), IoUring.OP_POLL_ADD, fd, 0L, IoUring.POLL_ADD_MULTI, 0L, tag(KIND_WAKE, 0, fd),
+            opFlags = IoUring.POLLIN,
+        )
     }
 
     private fun onWakeCompletion(flags: Int) {
         // Drain the counter so the next write raises POLLIN again; the queues drain at the next pass's top.
         Native.read(wakeFd.load(), wakeBuffers + 8, 8)
-        if (flags and IoUring.CQE_F_MORE == 0) armWakePoll()
+
+        if (flags and IoUring.CQE_F_MORE == 0) {
+            armWakePoll()
+        }
     }
 
     /** Every handoff from another thread ends here, after its enqueue. */
     internal fun wake() {
-        if (wakePending.exchange(1) == 0) wakeFdWrite()
+        if (wakePending.exchange(1) == 0) {
+            wakeFdWrite()
+        }
     }
 
     // First in each pass, so a handoff landing during the drains still wakes the next one. An exchange, not a
@@ -270,7 +301,9 @@ class Reactor(val id: Int, private val config: ServerConfig) {
         wakeUsers.addAndFetch(1)
         try {
             val fd = wakeFd.load()
-            if (fd > 0) Native.write(fd, wakeBuffers, 8)
+            if (fd > 0) {
+                Native.write(fd, wakeBuffers, 8)
+            }
         } finally {
             wakeUsers.addAndFetch(-1)
         }
@@ -282,12 +315,15 @@ class Reactor(val id: Int, private val config: ServerConfig) {
      */
     fun post(task: () -> Unit) {
         postQ.offer(task)
-        if (!onReactorThread) wake()
+        if (!onReactorThread) {
+            wake()
+        }
     }
 
     private fun drainPostQ() {
         while (true) {
             val task = postQ.poll() ?: return
+
             // A task that throws must not unwind the loop and end the reactor.
             try {
                 task()
@@ -309,8 +345,12 @@ class Reactor(val id: Int, private val config: ServerConfig) {
 
     // Checked on every pass, not left to the wait running out: a busy reactor's wait never does.
     private fun runDueTickers() {
-        if (nowMs < nextTickMs) return
+        if (nowMs < nextTickMs) {
+            return
+        }
+
         nextTickMs = nowMs + TICK_MS
+
         for (ticker in tickers) {
             try {
                 ticker()
@@ -338,7 +378,10 @@ class Reactor(val id: Int, private val config: ServerConfig) {
      */
     internal fun submitTimeout(nanoseconds: Long, completion: RingCompletion) {
         if (!onReactorThread) {
-            post { submitTimeout(nanoseconds, completion) }
+            post {
+                submitTimeout(nanoseconds, completion)
+            }
+
             return
         }
 
@@ -357,6 +400,7 @@ class Reactor(val id: Int, private val config: ServerConfig) {
         val target = opTargets[slot]
         opTargets[slot] = null
         opFree[opFreeTop++] = slot
+
         // The slot is free first: the inline continuation may submit its next op.
         target?.complete(res)
     }
@@ -366,8 +410,11 @@ class Reactor(val id: Int, private val config: ServerConfig) {
             val oldLength = opTargets.size
             opTargets = opTargets.copyOf(oldLength * 2)
             opFree = opFree.copyOf(oldLength * 2)
-            for (i in oldLength * 2 - 1 downTo oldLength) opFree[opFreeTop++] = i
+            for (i in oldLength * 2 - 1 downTo oldLength) {
+                opFree[opFreeTop++] = i
+            }
         }
+
         val slot = opFree[--opFreeTop]
         opTargets[slot] = completion
         return slot
@@ -375,7 +422,9 @@ class Reactor(val id: Int, private val config: ServerConfig) {
 
     // Grown with the slot table, so a slot always has a timespec behind it.
     private fun ensureTimespecCapacity() {
-        if (opTimespecCapacity >= opTargets.size) return
+        if (opTimespecCapacity >= opTargets.size) {
+            return
+        }
 
         // Queued timeouts point into the old block until submitted.
         if (opTimespecs != 0L) {
@@ -390,6 +439,7 @@ class Reactor(val id: Int, private val config: ServerConfig) {
             copyMemory(opTimespecs, block, opTimespecCapacity * 16L)
             Native.free(opTimespecs)
         }
+
         opTimespecs = block
         opTimespecCapacity = opTargets.size
     }
@@ -408,7 +458,9 @@ class Reactor(val id: Int, private val config: ServerConfig) {
         // Taken away before it is closed, and its writers waited out.
         val fd = wakeFd.exchange(0)
         if (fd > 0) {
-            while (wakeUsers.load() != 0) spinWait()
+            while (wakeUsers.load() != 0) {
+                spinWait()
+            }
             Native.close(fd)
         }
 
@@ -423,6 +475,7 @@ class Reactor(val id: Int, private val config: ServerConfig) {
             opTimespecs = 0L
             opTimespecCapacity = 0
         }
+
         tcp?.freeMemory()
         Native.free(wakeBuffers)
         wakeBuffers = 0L

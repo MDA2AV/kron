@@ -80,7 +80,10 @@ class TcpConnection internal constructor(
      * read at a time. The snapshot is the connection's own, valid until the next read.
      */
     suspend fun read(): RecvSnapshot {
-        if (!tcp.reactor.onReactorThread) return readOffReactor()
+        if (!tcp.reactor.onReactorThread) {
+            return readOffReactor()
+        }
+
         return suspendCoroutineUninterceptedOrReturn { readOrPark(it) }
     }
 
@@ -92,7 +95,9 @@ class TcpConnection internal constructor(
             return snapshotNow()
         }
 
-        if (closed) return snapshot.set(0, true)
+        if (closed) {
+            return snapshot.set(0, true)
+        }
 
         readParkedMs = tcp.reactor.nowMs   // the read clock, see TcpTransport.sweep
         check(readCont == null) { "read() is already waiting." }
@@ -103,7 +108,9 @@ class TcpConnection internal constructor(
     private suspend fun readOffReactor(): RecvSnapshot = suspendCoroutine { cont ->
         tcp.reactor.post {
             val result = readOrPark(cont)
-            if (result !== COROUTINE_SUSPENDED) cont.resume(result as RecvSnapshot)
+            if (result !== COROUTINE_SUSPENDED) {
+                cont.resume(result as RecvSnapshot)
+            }
         }
     }
 
@@ -119,7 +126,9 @@ class TcpConnection internal constructor(
 
     /** Hands [item]'s buffer back to the reactor, which offers it to the kernel again. */
     fun returnBuffer(item: RecvItem) {
-        if (item.hasBuffer) tcp.returnBuffer(item.bufferId)
+        if (item.hasBuffer) {
+            tcp.returnBuffer(item.bufferId)
+        }
     }
 
     internal fun returnBuffer(bufferId: Int) = tcp.returnBuffer(bufferId)
@@ -131,9 +140,14 @@ class TcpConnection internal constructor(
         if (!recv.tryEnqueue(address, length, bufferId, generation)) {
             printErr("[conn] recv queue overflow; closing connection.")
             overflowed = true
-            if (bufferId >= 0) tcp.returnBufferDirect(bufferId)
+
+            if (bufferId >= 0) {
+                tcp.returnBufferDirect(bufferId)
+            }
+
             return false
         }
+
         signalRead()
         return true
     }
@@ -162,7 +176,9 @@ class TcpConnection internal constructor(
     // Recycle: hands back the buffers still queued.
     internal fun drainRecv(scratch: RecvItem) {
         while (recv.tryDequeue(scratch)) {
-            if (scratch.hasBuffer) tcp.returnBufferDirect(scratch.bufferId)
+            if (scratch.hasBuffer) {
+                tcp.returnBufferDirect(scratch.bufferId)
+            }
         }
     }
 
@@ -212,6 +228,7 @@ class TcpConnection internal constructor(
     fun write(source: ByteArray, offset: Int = 0, length: Int = source.size - offset) {
         checkWritable()
         checkFromIndexSize(offset, length, source.size)
+
         ensureWritable(length)
         copyFromArray(source, offset, writeBuffer + writeTail, length)
         writeTail += length
@@ -221,6 +238,7 @@ class TcpConnection internal constructor(
     fun write(address: Long, length: Int) {
         checkWritable()
         require(length >= 0) { "write of $length bytes" }
+
         ensureWritable(length)
         copyMemory(address, writeBuffer + writeTail, length.toLong())
         writeTail += length
@@ -239,14 +257,19 @@ class TcpConnection internal constructor(
     /** Commits [count] bytes written at [getBuffer]'s address. */
     fun advance(count: Int) {
         checkWritable()
-        require(count >= 0 && count <= slabSize - writeTail) { "advance($count) past the writable ${slabSize - writeTail} bytes" }
+        require(count >= 0 && count <= slabSize - writeTail) {
+            "advance($count) past the writable ${slabSize - writeTail} bytes"
+        }
+
         writeTail += count
     }
 
     private fun checkWritable() = check(!flushInProgress) { "Cannot write while flush is in progress." }
 
     private fun ensureWritable(need: Int) {
-        if (need > slabSize - writeTail) growWriteSlab(writeTail.toLong() + need)
+        if (need > slabSize - writeTail) {
+            growWriteSlab(writeTail.toLong() + need)
+        }
     }
 
     // Doubles the slab and copies what is staged. Never during a flush, so the slab is not the kernel's.
@@ -255,13 +278,19 @@ class TcpConnection internal constructor(
         do {
             // Doubled past Int.MAX_VALUE the size wraps, to 0 at worst, and this loop would spin forever.
             if (newSize > Int.MAX_VALUE / 2) {
-                throw OutOfMemoryError("The write slab cannot grow past $newSize bytes to hold $required; flush before writing more.")
+                throw OutOfMemoryError(
+                    "The write slab cannot grow past $newSize bytes to hold $required; flush before writing more.",
+                )
             }
+
             newSize *= 2
         } while (newSize < required)
 
         val newBuffer = Native.alignedAlloc(64, newSize.toLong())
-        if (writeTail > 0) copyMemory(writeBuffer, newBuffer, writeTail.toLong())
+        if (writeTail > 0) {
+            copyMemory(writeBuffer, newBuffer, writeTail.toLong())
+        }
+
         Native.free(writeBuffer)
         writeBuffer = newBuffer
         slabSize = newSize
@@ -275,33 +304,44 @@ class TcpConnection internal constructor(
      * normally, so check [isClosed] (or the next read's snapshot) to learn of it.
      */
     suspend fun flush() {
-        if (!tcp.reactor.onReactorThread) return flushOffReactor()
+        if (!tcp.reactor.onReactorThread) {
+            return flushOffReactor()
+        }
+
         return suspendCoroutineUninterceptedOrReturn { flushOrPark(it) }
     }
 
     // Reactor thread; the pipe writer chains onto it the way the pipe reader chains onto readOrPark.
     internal fun flushOrPark(cont: Continuation<Unit>): Any {
         if (closed) {
-            if (flushArmed != FLUSH_SUBMITTED) dropStaged()
+            if (flushArmed != FLUSH_SUBMITTED) {
+                dropStaged()
+            }
+
             return Unit
         }
 
         check(!flushInProgress) { "flush() is already in progress." }
         val target = writeTail
-        if (target == 0) return Unit
+        if (target == 0) {
+            return Unit
+        }
 
         flushInProgress = true
         flushArmed = FLUSH_ARMED
         writeInFlight = target
         flushArmedMs = tcp.reactor.nowMs
         flushCont = cont
+
         tcp.submitFlush(this)
         return COROUTINE_SUSPENDED
     }
 
     private suspend fun flushOffReactor(): Unit = suspendCoroutine { cont ->
         tcp.reactor.post {
-            if (flushOrPark(cont) !== COROUTINE_SUSPENDED) cont.resume(Unit)
+            if (flushOrPark(cont) !== COROUTINE_SUSPENDED) {
+                cont.resume(Unit)
+            }
         }
     }
 
@@ -313,7 +353,10 @@ class TcpConnection internal constructor(
 
     // The reactor takes the flush to the kernel. False if it was released first.
     internal fun claimFlush(): Boolean {
-        if (flushArmed != FLUSH_ARMED) return false
+        if (flushArmed != FLUSH_ARMED) {
+            return false
+        }
+
         flushArmed = FLUSH_SUBMITTED
         return true
     }
@@ -333,6 +376,7 @@ class TcpConnection internal constructor(
         writeTail = 0
         writeInFlight = 0
         flushInProgress = false
+
         if (flushArmed != FLUSH_IDLE) {
             flushArmed = FLUSH_IDLE
             resumeFlush()
@@ -382,23 +426,33 @@ class TcpConnection internal constructor(
      */
     fun decRef() {
         if (!tcp.reactor.onReactorThread) {
-            tcp.reactor.post { decRef() }
+            tcp.reactor.post {
+                decRef()
+            }
+
             return
         }
 
         // Once per life: a release made twice would recycle the connection under the reactor's ref.
-        if (handlerRefReleased) return
+        if (handlerRefReleased) {
+            return
+        }
         handlerRefReleased = true
 
         // A FIN now would cut a flush in flight short, so the sweep sends that one once it completes.
-        if (refs == 2 && !flushInProgress) sendFin()
+        if (refs == 2 && !flushInProgress) {
+            sendFin()
+        }
+
         releaseRef()
     }
 
     internal fun releaseReactorRef() = releaseRef()
 
     private fun releaseRef() {
-        if (--refs == 0) tcp.recycle(this)
+        if (--refs == 0) {
+            tcp.recycle(this)
+        }
     }
 
     // The reactor tore the connection down, so no FIN; before markClosed, whose woken handler lets go inline.
@@ -426,10 +480,18 @@ class TcpConnection internal constructor(
      */
     fun shutdownWrite() {
         if (!tcp.reactor.onReactorThread) {
-            tcp.reactor.post { shutdownWrite() }
+            tcp.reactor.post {
+                shutdownWrite()
+            }
+
             return
         }
-        if (!flushInProgress) sendFin() else if (finSent == FIN_NONE) finSent = FIN_WANTED
+
+        if (!flushInProgress) {
+            sendFin()
+        } else if (finSent == FIN_NONE) {
+            finSent = FIN_WANTED
+        }
     }
 
     /** Takes this connection off the read timeout for the rest of its life. */
@@ -440,8 +502,14 @@ class TcpConnection internal constructor(
     // When the peer started owing the next move, or -1 when it does not: a read is parked on a connection
     // still on the read timeout, or the handler let go and its FIN is out.
     internal fun waitingOnPeerSince(): Long {
-        if (handlerReleased) return if (finSentMs != 0L) finSentMs else -1
-        if (readCont == null || readTimeoutDisabled) return -1
+        if (handlerReleased) {
+            return if (finSentMs != 0L) finSentMs else -1
+        }
+
+        if (readCont == null || readTimeoutDisabled) {
+            return -1
+        }
+
         return maxOf(readParkedMs, maxOf(flushArmedMs, flushSeenMs))
     }
 
@@ -450,10 +518,16 @@ class TcpConnection internal constructor(
     // the ref of its next life.
     internal fun releaseHandlerRef(lifeGeneration: Int) {
         if (!tcp.reactor.onReactorThread) {
-            tcp.reactor.post { releaseHandlerRef(lifeGeneration) }
+            tcp.reactor.post {
+                releaseHandlerRef(lifeGeneration)
+            }
+
             return
         }
-        if (generation == lifeGeneration) decRef()
+
+        if (generation == lifeGeneration) {
+            decRef()
+        }
     }
 
     // Recycle: every flag and counter back to a fresh connection's.
@@ -464,10 +538,12 @@ class TcpConnection internal constructor(
         pending = false
         closed = false
         overflowed = false
+
         flushArmed = FLUSH_IDLE
         flushInProgress = false
         flushCont = null
         flushArmedMs = 0
+
         readParkedMs = 0
         flushSeenMs = 0
         readTimeoutDisabled = false

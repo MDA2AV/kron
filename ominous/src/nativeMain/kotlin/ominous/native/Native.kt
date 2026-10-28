@@ -48,7 +48,8 @@ internal object Native {
         om_syscall6(SYS_IO_URING_REGISTER, fd.toLong(), opcode.toLong(), arg, nrArgs.toLong(), 0L, 0L).toInt()
 
     /** The mapping's address, or a negative errno. */
-    fun mmap(length: Long, prot: Int, flags: Int, fd: Int, offset: Long): Long = om_mmap(length, prot, flags, fd, offset)
+    fun mmap(length: Long, prot: Int, flags: Int, fd: Int, offset: Long): Long =
+        om_mmap(length, prot, flags, fd, offset)
 
     fun munmap(addr: Long, length: Long): Int = om_munmap(addr, length)
 
@@ -56,7 +57,8 @@ internal object Native {
 
     fun socket(domain: Int, type: Int, protocol: Int): Int = om_socket(domain, type, protocol)
 
-    fun setsockopt(fd: Int, level: Int, name: Int, value: Long, length: Int): Int = om_setsockopt(fd, level, name, value, length)
+    fun setsockopt(fd: Int, level: Int, name: Int, value: Long, length: Int): Int =
+        om_setsockopt(fd, level, name, value, length)
 
     fun bind(fd: Int, addr: Long, length: Int): Int = om_bind(fd, addr, length)
 
@@ -84,7 +86,10 @@ internal object Native {
 
     fun malloc(size: Long): Long {
         val p = om_malloc(size)
-        if (p == 0L) throw OutOfMemoryError("malloc($size)")
+        if (p == 0L) {
+            throw OutOfMemoryError("malloc($size)")
+        }
+
         return p
     }
 
@@ -92,12 +97,17 @@ internal object Native {
     fun alignedAlloc(alignment: Long, size: Long): Long {
         val rounded = (size + alignment - 1) / alignment * alignment
         val p = om_aligned_alloc(alignment, rounded)
-        if (p == 0L) throw OutOfMemoryError("aligned_alloc($alignment, $size)")
+        if (p == 0L) {
+            throw OutOfMemoryError("aligned_alloc($alignment, $size)")
+        }
+
         return p
     }
 
     fun free(addr: Long) {
-        if (addr != 0L) om_free(addr)
+        if (addr != 0L) {
+            om_free(addr)
+        }
     }
 
     /** Pins the calling thread to one CPU. */

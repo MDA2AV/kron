@@ -46,22 +46,27 @@ internal object Sockets {
         val addr = Native.malloc(SOCKADDR_IN_SIZE.toLong())
         try {
             setInt(fd, SOL_SOCKET, SO_REUSEADDR, 1)
-            if (reusePort) setInt(fd, SOL_SOCKET, SO_REUSEPORT, 1)
+            if (reusePort) {
+                setInt(fd, SOL_SOCKET, SO_REUSEPORT, 1)
+            }
             setInt(fd, IPPROTO_TCP, TCP_NODELAY, 1)
 
             zeroMemory(addr, SOCKADDR_IN_SIZE.toLong())
             putShort(addr, AF_INET.toShort())
             putShort(addr + 2, (((port and 0xFF) shl 8) or ((port ushr 8) and 0xFF)).toShort())   // htons
+
             val rc = Native.bind(fd, addr, SOCKADDR_IN_SIZE)
             if (rc < 0) {
                 Native.close(fd)
                 throw IllegalStateException("bind(0.0.0.0:$port) failed with errno ${-rc}")
             }
+
             val lrc = Native.listen(fd, backlog)
             if (lrc < 0) {
                 Native.close(fd)
                 throw IllegalStateException("listen(0.0.0.0:$port) failed with errno ${-lrc}")
             }
+
             return fd
         } finally {
             Native.free(addr)
@@ -75,6 +80,7 @@ internal object Sockets {
             putInt(addr + SOCKADDR_IN_SIZE, SOCKADDR_IN_SIZE)
             val rc = Native.getsockname(fd, addr, addr + SOCKADDR_IN_SIZE)
             check(rc == 0) { "getsockname failed with errno ${-rc}" }
+
             val be = getShort(addr + 2).toInt() and 0xFFFF
             return ((be and 0xFF) shl 8) or (be ushr 8)
         } finally {

@@ -24,7 +24,10 @@ internal class SliceChain {
     fun length(slot: Int): Int = lengths[slot]
 
     fun add(address: Long, length: Int, bufferId: Int) {
-        if (count == addresses.size) grow()
+        if (count == addresses.size) {
+            grow()
+        }
+
         val s = (head + count) and mask
         addresses[s] = address
         lengths[s] = length
@@ -46,12 +49,14 @@ internal class SliceChain {
         val a = LongArray(size)
         val l = IntArray(size)
         val b = IntArray(size)
+
         for (i in 0 until count) {
             val s = slot(i)
             a[i] = addresses[s]
             l[i] = lengths[s]
             b[i] = bufferIds[s]
         }
+
         addresses = a
         lengths = l
         bufferIds = b
@@ -111,63 +116,102 @@ class ReadBuffer internal constructor(private val chain: SliceChain) {
 
     operator fun get(index: Long): Byte {
         checkIndex(index, length)
+
         var remaining = index
         for (i in 0 until segmentCount) {
             val len = segmentLength(i)
-            if (remaining < len) return getByte(segmentAddress(i) + remaining)
+            if (remaining < len) {
+                return getByte(segmentAddress(i) + remaining)
+            }
+
             remaining -= len
         }
+
         throw IndexOutOfBoundsException(index.toString())
     }
 
     /** The first [value] at or after [from], or -1. */
     fun indexOf(value: Byte, from: Long = 0): Long {
-        if (from >= length) return -1
+        if (from >= length) {
+            return -1
+        }
+
         var base = 0L
         for (i in 0 until segmentCount) {
             val len = segmentLength(i)
             if (from < base + len) {
                 val skip = if (from > base) (from - base).toInt() else 0
                 val found = scan(segmentAddress(i) + skip, len - skip, value)
-                if (found >= 0) return base + skip + found
+                if (found >= 0) {
+                    return base + skip + found
+                }
             }
+
             base += len
         }
+
         return -1
     }
 
     /** The first occurrence of [pattern] at or after [from], or -1; it may span segments. */
     fun indexOf(pattern: ByteArray, from: Long = 0): Long {
-        if (pattern.isEmpty()) return from.coerceAtMost(length)
+        if (pattern.isEmpty()) {
+            return from.coerceAtMost(length)
+        }
+
         var at = from
         while (true) {
             val first = indexOf(pattern[0], at)
-            if (first < 0 || first + pattern.size > length) return -1
-            if (matches(first, pattern)) return first
+            if (first < 0 || first + pattern.size > length) {
+                return -1
+            }
+
+            if (matches(first, pattern)) {
+                return first
+            }
+
             at = first + 1
         }
     }
 
     /** Whether [pattern] occurs at [index]. */
     fun matches(index: Long, pattern: ByteArray): Boolean {
-        if (index < 0 || index + pattern.size > length) return false
-        for (k in pattern.indices) if (this[index + k] != pattern[k]) return false
+        if (index < 0 || index + pattern.size > length) {
+            return false
+        }
+
+        for (k in pattern.indices) {
+            if (this[index + k] != pattern[k]) {
+                return false
+            }
+        }
+
         return true
     }
 
     /** Copies [count] bytes from [from] into [destination] at [destinationOffset]. */
-    fun copyTo(destination: ByteArray, destinationOffset: Int = 0, from: Long = 0, count: Int = (length - from).toInt()) {
+    fun copyTo(
+        destination: ByteArray,
+        destinationOffset: Int = 0,
+        from: Long = 0,
+        count: Int = (length - from).toInt(),
+    ) {
         checkFromIndexSize(from, count.toLong(), length)
         checkFromIndexSize(destinationOffset, count, destination.size)
+
         var skip = from
         var written = 0
         for (i in 0 until segmentCount) {
-            if (written == count) return
+            if (written == count) {
+                return
+            }
+
             val len = segmentLength(i)
             if (skip >= len) {
                 skip -= len
                 continue
             }
+
             val n = minOf(len - skip.toInt(), count - written)
             copyToArray(segmentAddress(i) + skip, destination, destinationOffset + written, n)
             written += n
@@ -193,13 +237,21 @@ class ReadBuffer internal constructor(private val chain: SliceChain) {
             while (i + 8 <= length) {
                 val word = getLong(address + i) xor pattern
                 val found = (word - ONES) and word.inv() and HIGHS
-                if (found != 0L) return i + (found.countTrailingZeroBits() ushr 3)
+                if (found != 0L) {
+                    return i + (found.countTrailingZeroBits() ushr 3)
+                }
+
                 i += 8
             }
+
             while (i < length) {
-                if (getByte(address + i) == value) return i
+                if (getByte(address + i) == value) {
+                    return i
+                }
+
                 i++
             }
+
             return -1
         }
     }

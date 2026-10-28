@@ -39,7 +39,9 @@ static inline long om_mmap(long length, int prot, int flags, int fd, long offset
     return p == MAP_FAILED ? -errno : (long)p;
 }
 
-static inline int om_munmap(long address, long length) { return munmap((void *)address, (size_t)length); }
+static inline int om_munmap(long address, long length) {
+    return munmap((void *)address, (size_t)length);
+}
 
 static inline int om_socket(int domain, int type, int protocol) {
     int rc = socket(domain, type, protocol);
@@ -54,7 +56,9 @@ static inline int om_bind(int fd, long address, int length) {
     return bind(fd, (const struct sockaddr *)address, (socklen_t)length) < 0 ? -errno : 0;
 }
 
-static inline int om_listen(int fd, int backlog) { return listen(fd, backlog) < 0 ? -errno : 0; }
+static inline int om_listen(int fd, int backlog) {
+    return listen(fd, backlog) < 0 ? -errno : 0;
+}
 
 static inline int om_getsockname(int fd, long address, long lengthAddress) {
     return getsockname(fd, (struct sockaddr *)address, (socklen_t *)lengthAddress) < 0 ? -errno : 0;
@@ -66,26 +70,53 @@ static inline int om_eventfd(int initval, int flags) {
 }
 
 /* Best effort, as on the JVM: -1 is all a caller acts on. */
-static inline int om_close(int fd) { return close(fd); }
-static inline int om_shutdown(int fd, int how) { return shutdown(fd, how); }
-static inline long om_read(int fd, long buffer, long count) { return read(fd, (void *)buffer, (size_t)count); }
-static inline long om_write(int fd, long buffer, long count) { return write(fd, (const void *)buffer, (size_t)count); }
-static inline long om_send(int fd, long buffer, long length, int flags) { return send(fd, (const void *)buffer, (size_t)length, flags); }
-static inline long om_recv(int fd, long buffer, long length, int flags) { return recv(fd, (void *)buffer, (size_t)length, flags); }
-static inline long om_sendmsg(int fd, long message, int flags) { return sendmsg(fd, (const struct msghdr *)message, flags); }
-static inline long om_recvmsg(int fd, long message, int flags) { return recvmsg(fd, (struct msghdr *)message, flags); }
+static inline int om_close(int fd) {
+    return close(fd);
+}
+static inline int om_shutdown(int fd, int how) {
+    return shutdown(fd, how);
+}
+static inline long om_read(int fd, long buffer, long count) {
+    return read(fd, (void *)buffer, (size_t)count);
+}
+static inline long om_write(int fd, long buffer, long count) {
+    return write(fd, (const void *)buffer, (size_t)count);
+}
+static inline long om_send(int fd, long buffer, long length, int flags) {
+    return send(fd, (const void *)buffer, (size_t)length, flags);
+}
+static inline long om_recv(int fd, long buffer, long length, int flags) {
+    return recv(fd, (void *)buffer, (size_t)length, flags);
+}
+static inline long om_sendmsg(int fd, long message, int flags) {
+    return sendmsg(fd, (const struct msghdr *)message, flags);
+}
+static inline long om_recvmsg(int fd, long message, int flags) {
+    return recvmsg(fd, (struct msghdr *)message, flags);
+}
 
-static inline long om_malloc(long size) { return (long)malloc((size_t)size); }
-static inline long om_aligned_alloc(long alignment, long size) { return (long)aligned_alloc((size_t)alignment, (size_t)size); }
-static inline void om_free(long address) { free((void *)address); }
-static inline void om_memmove(long destination, long source, long length) { memmove((void *)destination, (const void *)source, (size_t)length); }
-static inline void om_memset(long destination, int value, long length) { memset((void *)destination, value, (size_t)length); }
+static inline long om_malloc(long size) {
+    return (long)malloc((size_t)size);
+}
+static inline long om_aligned_alloc(long alignment, long size) {
+    return (long)aligned_alloc((size_t)alignment, (size_t)size);
+}
+static inline void om_free(long address) {
+    free((void *)address);
+}
+static inline void om_memmove(long destination, long source, long length) {
+    memmove((void *)destination, (const void *)source, (size_t)length);
+}
+static inline void om_memset(long destination, int value, long length) {
+    memset((void *)destination, value, (size_t)length);
+}
 
 /* Pins the calling thread to one CPU. */
 static inline int om_pin_current_thread(int cpu) {
     cpu_set_t set;
     CPU_ZERO(&set);
     CPU_SET(cpu, &set);
+
     return sched_setaffinity(0, sizeof set, &set) < 0 ? -errno : 0;
 }
 
@@ -93,11 +124,19 @@ static inline int om_pin_current_thread(int cpu) {
 static inline long om_thread_start(void *(*entry)(void *), void *argument, const char *name) {
     pthread_t thread;
     int rc = pthread_create(&thread, 0, entry, argument);
-    if (rc != 0) return -rc;
-    if (name) pthread_setname_np(thread, name);
+    if (rc != 0) {
+        return -rc;
+    }
+
+    if (name) {
+        pthread_setname_np(thread, name);
+    }
+
     return (long)thread;
 }
 
-static inline int om_thread_join(long thread) { return -pthread_join((pthread_t)thread, 0); }
+static inline int om_thread_join(long thread) {
+    return -pthread_join((pthread_t)thread, 0);
+}
 
 #endif

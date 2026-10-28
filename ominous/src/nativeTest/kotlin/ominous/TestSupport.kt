@@ -47,16 +47,22 @@ class Latch(count: Int) {
     fun countDown() {
         while (true) {
             val c = remaining.load()
-            if (c == 0 || remaining.compareAndSet(c, c - 1)) return
+            if (c == 0 || remaining.compareAndSet(c, c - 1)) {
+                return
+            }
         }
     }
 
     fun await(timeoutMs: Long): Boolean {
         val deadline = Clock.monotonicMs() + timeoutMs
+
         while (remaining.load() > 0) {
-            if (Clock.monotonicMs() >= deadline) return false
+            if (Clock.monotonicMs() >= deadline) {
+                return false
+            }
             usleep(1000u)
         }
+
         return true
     }
 }
@@ -66,14 +72,18 @@ class Latch(count: Int) {
  * retried, as java.net.Socket does - a thread that created rings is interrupted when the kernel tears them down.
  */
 class TestSocket : AutoCloseable {
-    val fd: Int = socket(AF_INET, SOCK_STREAM, 0).also { check(it >= 0) { "socket failed with errno $errno" } }
+    val fd: Int = socket(AF_INET, SOCK_STREAM, 0).also {
+        check(it >= 0) { "socket failed with errno $errno" }
+    }
 
     fun connect(port: Int, host: String = "127.0.0.1") = memScoped {
         val addr = alloc<sockaddr_in>()
         addr.sin_family = AF_INET.convert()
         addr.sin_port = (((port and 0xFF) shl 8) or ((port ushr 8) and 0xFF)).toUShort()   // htons
         val octets = host.split('.').map { it.toUInt() }
-        addr.sin_addr.s_addr = octets[0] or (octets[1] shl 8) or (octets[2] shl 16) or (octets[3] shl 24)   // network order
+        addr.sin_addr.s_addr =
+            octets[0] or (octets[1] shl 8) or (octets[2] shl 16) or (octets[3] shl 24)   // network order
+
         if (platform.posix.connect(fd, addr.ptr.reinterpret(), sizeOf<sockaddr_in>().convert()) != 0) {
             throw IOException("connect failed with errno $errno")
         }
@@ -84,6 +94,7 @@ class TestSocket : AutoCloseable {
         val tv = alloc<timeval>()
         tv.tv_sec = (milliseconds / 1000).convert()
         tv.tv_usec = (milliseconds % 1000 * 1000).convert()
+
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, tv.ptr, sizeOf<timeval>().convert())
     }
 
@@ -91,18 +102,25 @@ class TestSocket : AutoCloseable {
     fun setReceiveBuffer(bytes: Int) = memScoped {
         val size = alloc<IntVar>()
         size.value = bytes
+
         setsockopt(fd, SOL_SOCKET, SO_RCVBUF, size.ptr, sizeOf<IntVar>().convert())
     }
 
     fun write(bytes: ByteArray) {
-        if (bytes.isEmpty()) return
+        if (bytes.isEmpty()) {
+            return
+        }
+
         bytes.usePinned { pinned ->
             var offset = 0
+
             while (offset < bytes.size) {
                 val n = send(fd, pinned.addressOf(offset), (bytes.size - offset).convert(), MSG_NOSIGNAL)
                 if (n < 0) {
                     val e = errno
-                    if (e == EINTR) continue
+                    if (e == EINTR) {
+                        continue
+                    }
                     throw IOException("send failed with errno $e")
                 }
                 offset += n.toInt()
@@ -123,9 +141,14 @@ class TestSocket : AutoCloseable {
     fun read(into: ByteArray, offset: Int, length: Int): Int {
         while (true) {
             val n = into.usePinned { recv(fd, it.addressOf(offset), length.convert(), 0) }
-            if (n >= 0) return if (n == 0L) -1 else n.toInt()
+            if (n >= 0) {
+                return if (n == 0L) -1 else n.toInt()
+            }
+
             val e = errno
-            if (e != EINTR) throw IOException("recv failed with errno $e")
+            if (e != EINTR) {
+                throw IOException("recv failed with errno $e")
+            }
         }
     }
 
@@ -133,11 +156,15 @@ class TestSocket : AutoCloseable {
     fun readBytes(count: Int): ByteArray {
         val bytes = ByteArray(count)
         var got = 0
+
         while (got < count) {
             val n = read(bytes, got, count - got)
-            if (n < 0) return bytes.copyOf(got)
+            if (n < 0) {
+                return bytes.copyOf(got)
+            }
             got += n
         }
+
         return bytes
     }
 
@@ -145,10 +172,15 @@ class TestSocket : AutoCloseable {
     fun readToEnd(): ByteArray {
         val out = ArrayList<Byte>()
         val chunk = ByteArray(16 * 1024)
+
         while (true) {
             val n = read(chunk, 0, chunk.size)
-            if (n < 0) return out.toByteArray()
-            for (i in 0 until n) out.add(chunk[i])
+            if (n < 0) {
+                return out.toByteArray()
+            }
+            for (i in 0 until n) {
+                out.add(chunk[i])
+            }
         }
     }
 
@@ -158,16 +190,24 @@ class TestSocket : AutoCloseable {
      */
     fun awaitAcknowledged(timeoutMs: Long): Boolean {
         val deadline = Clock.monotonicMs() + timeoutMs
+
         while (true) {
-            if (unacknowledgedBytes() == 0) return true
-            if (Clock.monotonicMs() >= deadline) return false
+            if (unacknowledgedBytes() == 0) {
+                return true
+            }
+            if (Clock.monotonicMs() >= deadline) {
+                return false
+            }
             usleep(1000u)
         }
     }
 
     private fun unacknowledgedBytes(): Int = memScoped {
         val bytes = alloc<IntVar>()
-        if (ioctl(fd, TIOCOUTQ, bytes.ptr) != 0) throw IOException("ioctl(TIOCOUTQ) failed with errno $errno")
+        if (ioctl(fd, TIOCOUTQ, bytes.ptr) != 0) {
+            throw IOException("ioctl(TIOCOUTQ) failed with errno $errno")
+        }
+
         bytes.value
     }
 
@@ -198,7 +238,9 @@ class TestThreads {
     }
 
     fun joinAll() {
-        while (true) om_thread_join(started.poll() ?: return)
+        while (true) {
+            om_thread_join(started.poll() ?: return)
+        }
     }
 }
 
@@ -206,18 +248,26 @@ private val threadEntry = staticCFunction<COpaquePointer?, COpaquePointer?> { ar
     val ref = argument!!.asStableRef<() -> Unit>()
     val block = ref.get()
     ref.dispose()
+
     try {
         block()
     } catch (e: Throwable) {
         println("test thread failed: ${e.stackTraceToString()}")
     }
+
     null
 }
 
 /** One reactor on a port the kernel picks, running [handler], started and listening. */
 class TestServer(config: ServerConfig, handler: suspend (TcpConnection) -> Unit) : AutoCloseable {
     private val ready = Latch(1)
-    private val server = OminousServer(config, onStart = { ready.countDown() }, handler = handler).start()
+    private val server = OminousServer(
+        config,
+        onStart = {
+            ready.countDown()
+        },
+        handler = handler,
+    ).start()
 
     init {
         check(ready.await(10_000)) { "the reactor never started" }
@@ -239,18 +289,30 @@ fun testConfig(
     tcp: TcpOptions = TcpOptions(port = 0),
     recvSlots: Int = 64,
     recvBufferSize: Int = 4096,
-): ServerConfig = ServerConfig(reactorCount = 1, ringEntries = 256, recvBufferSize = recvBufferSize, recvSlots = recvSlots, tcp = tcp)
+): ServerConfig = ServerConfig(
+    reactorCount = 1,
+    ringEntries = 256,
+    recvBufferSize = recvBufferSize,
+    recvSlots = recvSlots,
+    tcp = tcp,
+)
 
 /** Writes back everything it receives, straight from the recv buffers, until the peer is gone. */
 suspend fun echo(conn: TcpConnection) {
     val item = RecvItem()
+
     while (true) {
         val snapshot = conn.read()
         while (conn.tryGetItem(snapshot, item)) {
-            if (item.hasBuffer) conn.write(item.address, item.length)
+            if (item.hasBuffer) {
+                conn.write(item.address, item.length)
+            }
             conn.returnBuffer(item)
         }
+
         conn.flush()
-        if (snapshot.isClosed) return
+        if (snapshot.isClosed) {
+            return
+        }
     }
 }

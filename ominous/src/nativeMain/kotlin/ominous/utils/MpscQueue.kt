@@ -24,6 +24,7 @@ internal class MpscQueue<T : Any> {
     fun poll(): T? {
         val next = tail.next.load() ?: return null
         tail = next
+
         val value = next.value
         next.value = null
         return value

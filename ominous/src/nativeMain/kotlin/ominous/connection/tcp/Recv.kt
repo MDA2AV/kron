@@ -89,13 +89,16 @@ internal class RecvQueue(capacity: Int) {
     fun tryEnqueue(address: Long, length: Int, bufferId: Int, generation: Int): Boolean {
         val h = head
         val t = tail
-        if (t - h >= addresses.size) return false
+        if (t - h >= addresses.size) {
+            return false
+        }
 
         val i = (t and mask).toInt()
         addresses[i] = address
         lengths[i] = length
         bufferIds[i] = bufferId
         generations[i] = generation
+
         tail = t + 1
         return true
     }
@@ -103,14 +106,20 @@ internal class RecvQueue(capacity: Int) {
     /** Takes the next item if it lies before [tailSnapshot]. */
     fun tryDequeueUntil(tailSnapshot: Long, item: RecvItem): Boolean {
         val h = head
-        if (h >= tailSnapshot) return false
+        if (h >= tailSnapshot) {
+            return false
+        }
+
         take(h, item)
         return true
     }
 
     fun tryDequeue(item: RecvItem): Boolean {
         val h = head
-        if (h >= tail) return false
+        if (h >= tail) {
+            return false
+        }
+
         take(h, item)
         return true
     }

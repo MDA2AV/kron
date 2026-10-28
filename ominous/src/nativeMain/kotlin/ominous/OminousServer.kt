@@ -37,6 +37,7 @@ class OminousServer(
             }
             threads[i] = thread
         }
+
         return this
     }
 
@@ -64,10 +65,12 @@ private val reactorEntry = staticCFunction<COpaquePointer?, COpaquePointer?> { a
     val ref = argument!!.asStableRef<Reactor>()
     val reactor = ref.get()
     ref.dispose()
+
     try {
         reactor.run()
     } catch (e: Throwable) {
         printErr("[r${reactor.id}] reactor thread ended: ${e.stackTraceToString()}")
     }
+
     null
 }

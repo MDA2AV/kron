@@ -25,22 +25,36 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
         val ports = intArrayOf(options.port) + options.extraPorts
         listenFds = IntArray(ports.size) { -1 }
         listenPorts = ports.copyOf()
+
         for (i in ports.indices) {
             listenFds[i] = Sockets.listen(ports[i], options.listenBacklog)
-            if (ports[i] == 0) listenPorts[i] = Sockets.localPort(listenFds[i])
+            if (ports[i] == 0) {
+                listenPorts[i] = Sockets.localPort(listenFds[i])
+            }
         }
     }
 
     fun armAccepts() {
-        for (fd in listenFds) submitAccept(fd)
+        for (fd in listenFds) {
+            submitAccept(fd)
+        }
     }
 
     fun closeListeners() {
-        for (fd in listenFds) if (fd >= 0) Native.close(fd)
+        for (fd in listenFds) {
+            if (fd >= 0) {
+                Native.close(fd)
+            }
+        }
     }
 
     private fun portOf(listenFd: Int): Int {
-        for (i in listenFds.indices) if (listenFds[i] == listenFd) return listenPorts[i]
+        for (i in listenFds.indices) {
+            if (listenFds[i] == listenFd) {
+                return listenPorts[i]
+            }
+        }
+
         return listenPorts[0]
     }
 
@@ -64,7 +78,11 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
             returnBufferDirect(bid)
             return
         }
-        while (!returnQ.offer(bid.toLong())) spinWait()
+
+        while (!returnQ.offer(bid.toLong())) {
+            spinWait()
+        }
+
         // Without the wake a queued return waits for an unrelated CQE; if the group drains meanwhile, recvs
         // fail with ENOBUFS.
         reactor.wake()
@@ -79,12 +97,16 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
 
     fun drainReturnQ() {
         var bid = returnQ.poll()
-        if (bid < 0) return
+        if (bid < 0) {
+            return
+        }
+
         val ring = bufRing!!
         while (bid >= 0) {
             ring.add(bid.toInt())
             bid = returnQ.poll()
         }
+
         ring.publish()
         buffersReturned = true
     }
@@ -109,9 +131,12 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
     private fun track(fd: Int, conn: TcpConnection) {
         if (fd >= connections.size) {
             var length = connections.size
-            while (length <= fd) length *= 2
+            while (length <= fd) {
+                length *= 2
+            }
             connections = connections.copyOf(length)
         }
+
         connections[fd] = conn
     }
 
@@ -146,7 +171,10 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
 
     // The connection's flush, straight to the SQ: it leaves with the reactor's next enter.
     fun submitFlush(conn: TcpConnection) {
-        if (!conn.claimFlush()) return   // released before it reached the kernel
+        if (!conn.claimFlush()) {
+            return   // released before it reached the kernel
+        }
+
         submitSend(conn.clientFd, conn.generation and 0xFFFF, conn.writeBuffer, conn.writeInFlight, conn.sendFlags)
     }
 
@@ -178,15 +206,23 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
             // reactor; once a tick instead, reported once until an accept succeeds.
             if (!acceptPauseReported) {
                 acceptPauseReported = true
-                printErr("[r${reactor.id}] accept failed ($res): out of file descriptors or memory, retrying every ${Reactor.TICK_MS} ms")
+                printErr(
+                    "[r${reactor.id}] accept failed ($res): out of file descriptors or memory, " +
+                        "retrying every ${Reactor.TICK_MS} ms"
+                )
             }
-            if (!more) acceptPaused.add(listenFd)
+            if (!more) {
+                acceptPaused.add(listenFd)
+            }
+
             return
         } else {
             printErr("[r${reactor.id}] accept error: $res")
         }
 
-        if (!more) submitAccept(listenFd)
+        if (!more) {
+            submitAccept(listenFd)
+        }
     }
 
     // ---- Receive ----------------------------------------------------------------------------------------
@@ -207,19 +243,28 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
                 conn.readParkedMs = reactor.nowMs   // the peer sent; the wait is ours, so the clock restarts
                 recvStarved.add((gen.toLong() shl 32) or (fd.toLong() and 0xFFFF_FFFFL))
             }
+
             return
         }
 
         if (res <= 0) {
             // Peer EOF or recv error: the reactor owns teardown.
-            if (hasBuf) returnBufferDirect(bid)
-            if (conn != null) closeFromRecv(conn, fd)
+            if (hasBuf) {
+                returnBufferDirect(bid)
+            }
+            if (conn != null) {
+                closeFromRecv(conn, fd)
+            }
+
             return
         }
 
         if (conn == null) {
             // A stale CQE from the fd's previous tenant.
-            if (hasBuf) returnBufferDirect(bid)
+            if (hasBuf) {
+                returnBufferDirect(bid)
+            }
+
             return
         }
 
@@ -229,19 +274,26 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
             return
         }
 
-        if (flags and IoUring.CQE_F_MORE == 0) submitRecv(fd, gen)
+        if (flags and IoUring.CQE_F_MORE == 0) {
+            submitRecv(fd, gen)
+        }
     }
 
     // Once per loop pass, and only when a buffer came back since the last one, so a parked connection
     // cannot spin the loop.
     fun rearmStarvedRecvs() {
-        if (recvStarved.isEmpty() || !buffersReturned) return
+        if (recvStarved.isEmpty() || !buffersReturned) {
+            return
+        }
+
         buffersReturned = false
 
         for (packed in recvStarved) {
             val fd = packed.toInt()
             val gen = (packed ushr 32).toInt()
-            if (connAt(fd, gen) != null) submitRecv(fd, gen)
+            if (connAt(fd, gen) != null) {
+                submitRecv(fd, gen)
+            }
         }
         recvStarved.clear()
     }
@@ -322,7 +374,11 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
         Native.close(fd)
         conn.clear()
 
-        if (pool.size < options.poolMax) pool.addLast(conn) else conn.dispose()
+        if (pool.size < options.poolMax) {
+            pool.addLast(conn)
+        } else {
+            conn.dispose()
+        }
     }
 
     // ---- Sweep ------------------------------------------------------------------------------------------
@@ -332,28 +388,40 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
      * and so is one whose send the peer stopped draining; a FIN left behind a flush goes out.
      */
     fun sweep() {
-        for (listenFd in acceptPaused) submitAccept(listenFd)
+        for (listenFd in acceptPaused) {
+            submitAccept(listenFd)
+        }
         acceptPaused.clear()
 
         val now = Clock.monotonicMs()
         val conns = connections
+
         for (fd in conns.indices) {
             val conn = conns[fd] ?: continue
-            if (conn.sweepClosed) continue
+            if (conn.sweepClosed) {
+                continue
+            }
 
             // Sending, so not waiting on the peer: only the send clock applies.
             if (conn.flushOutstanding) {
                 conn.flushSeenMs = now
-                if (options.sendTimeoutMs > 0 && now - conn.flushArmedMs > options.sendTimeoutMs) sweepClose(conn)
+                if (options.sendTimeoutMs > 0 && now - conn.flushArmedMs > options.sendTimeoutMs) {
+                    sweepClose(conn)
+                }
+
                 continue
             }
 
             // A FIN left behind a flush - by a handler that let go, or by shutdownWrite - goes now.
-            if ((conn.handlerReleased || conn.finWanted) && !conn.finWasSent) conn.sendFin()
+            if ((conn.handlerReleased || conn.finWanted) && !conn.finWasSent) {
+                conn.sendFin()
+            }
 
             if (options.readTimeoutMs > 0) {
                 val since = conn.waitingOnPeerSince()
-                if (since >= 0 && now - since > options.readTimeoutMs) sweepClose(conn)
+                if (since >= 0 && now - since > options.readTimeoutMs) {
+                    sweepClose(conn)
+                }
             }
         }
     }
@@ -373,8 +441,10 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
     // Live connections' sockets are closed, never their objects: a handler may still write to them.
     fun closeAcceptedSockets() {
         val conns = connections
+
         for (fd in conns.indices) {
             val conn = conns[fd] ?: continue
+
             // A handler letting go later must not shut down whatever socket gets the number next.
             conn.suppressFin()
             Native.close(fd)
@@ -389,7 +459,10 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
 
     // After the ring is closed: the kernel can no longer write into these.
     fun freeMemory() {
-        while (true) pool.removeLastOrNull()?.dispose() ?: break
+        while (true) {
+            pool.removeLastOrNull()?.dispose() ?: break
+        }
+
         bufRing?.close()
         bufRing = null
     }

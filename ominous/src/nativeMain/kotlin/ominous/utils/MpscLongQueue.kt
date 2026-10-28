@@ -19,7 +19,9 @@ internal class MpscLongQueue(capacity: Int) {
     private var dequeuePos = 0L
 
     init {
-        for (i in 0 until capacity) sequence.storeAt(i, i.toLong())
+        for (i in 0 until capacity) {
+            sequence.storeAt(i, i.toLong())
+        }
     }
 
     /** False when the queue is full. */
@@ -47,7 +49,10 @@ internal class MpscLongQueue(capacity: Int) {
     fun poll(): Long {
         val pos = dequeuePos
         val index = (pos and mask).toInt()
-        if (sequence.loadAt(index) - (pos + 1) < 0L) return -1
+        if (sequence.loadAt(index) - (pos + 1) < 0L) {
+            return -1
+        }
+
         val value = values[index]
         sequence.storeAt(index, pos + mask + 1)
         dequeuePos = pos + 1

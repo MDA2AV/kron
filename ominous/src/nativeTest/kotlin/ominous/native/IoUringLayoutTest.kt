@@ -133,6 +133,7 @@ class IoUringLayoutTest {
                 0x0102_0304_0506_0708L, flags = IoUring.IOSQE_BUFFER_SELECT, ioprio = IoUring.RECV_MULTISHOT,
                 opFlags = 0x0F0E_0D0C, bufIndex = 0xBEEF, fileIndex = 0x7654_3210,
             )
+
             val s = interpretPointed<io_uring_sqe>(nativeNullPtr + sqe)
             assertEquals(IoUring.OP_RECV.toUByte(), s.opcode)
             assertEquals(IoUring.IOSQE_BUFFER_SELECT.toUByte(), s.flags)
@@ -171,6 +172,7 @@ class IoUringLayoutTest {
             assertEquals(0x22, getInt(p + IoUring.P_CQ_ENTRIES))
             assertEquals(0x33, getInt(p + IoUring.P_FLAGS))
             assertEquals(0x44, getInt(p + IoUring.P_FEATURES))
+
             // Ring.map's reads, at its literal offsets into io_sqring_offsets and io_cqring_offsets.
             val sqOff = p + IoUring.P_SQ_OFF
             val cqOff = p + IoUring.P_CQ_OFF
@@ -183,6 +185,7 @@ class IoUringLayoutTest {
             cqe.user_data = 0x0102_0304_0506_0708uL
             cqe.res = -125
             cqe.flags = 0x0007_0003u
+
             // Reactor.loop's reads.
             assertEquals(0x0102_0304_0506_0708L, getLong(c))
             assertEquals(-125, getInt(c + 8))
@@ -195,6 +198,7 @@ class IoUringLayoutTest {
             buf.len = 0x8000u
             buf.bid = 0x1234u
             buf.resv = 0x5678u   // bufs[0].resv is the ring's tail
+
             assertEquals(0x1000_2000_3000_4000L, getLong(b))
             assertEquals(0x8000, getInt(b + 8))
             assertEquals(0x1234.toShort(), getShort(b + 12))
@@ -207,6 +211,7 @@ class IoUringLayoutTest {
             reg.ring_entries = 4096u
             reg.bgid = 7u
             reg.flags = IOU_PBUF_RING_INC.toUShort()
+
             // BufferRing's writes.
             assertEquals(0x7000_0000_0000_1000L, getLong(r))
             assertEquals(4096, getInt(r + 8))
@@ -218,6 +223,7 @@ class IoUringLayoutTest {
             val update = interpretPointed<io_uring_rsrc_update>(nativeNullPtr + u)
             update.offset = 3u
             update.data = 42uL
+
             assertEquals(3, getInt(u))
             assertEquals(42L, getLong(u + 8))
         }
@@ -225,6 +231,7 @@ class IoUringLayoutTest {
         withZeroed(IoUring.GETEVENTS_ARG_SIZE) { a ->
             val arg = interpretPointed<io_uring_getevents_arg>(nativeNullPtr + a)
             arg.ts = 0x0BAD_F00DuL
+
             assertEquals(0x0BAD_F00DL, getLong(a + 16))   // Ring.submitAndWait's timespec pointer
         }
     }

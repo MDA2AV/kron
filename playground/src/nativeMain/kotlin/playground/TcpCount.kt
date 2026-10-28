@@ -23,7 +23,13 @@ object TcpCount {
             ringEntries = 8192,
             recvBufferSize = 32 * 1024,
             recvSlots = 4096,
-            tcp = TcpOptions(port = port, listenBacklog = 1024, writeSlabSize = 16 * 1024, poolMax = 1024, recvQueueEntries = 64),
+            tcp = TcpOptions(
+                port = port,
+                listenBacklog = 1024,
+                writeSlabSize = 16 * 1024,
+                poolMax = 1024,
+                recvQueueEntries = 64
+            ),
         )
 
         val response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nok".encodeToByteArray()
@@ -31,6 +37,7 @@ object TcpCount {
         suspend fun handle(conn: TcpConnection) {
             val item = RecvItem()
             var state = 0   // how much of "\r\n\r\n" the bytes so far end with
+
             while (true) {
                 val snapshot = conn.read()
 
@@ -42,7 +49,10 @@ object TcpCount {
                             13 -> state = if (state == 2) 3 else 1
                             10 -> state = when (state) {
                                 1 -> 2
-                                3 -> { requests++; 0 }
+                                3 -> {
+                                    requests++
+                                    0
+                                }
                                 else -> 0
                             }
                             else -> state = 0
@@ -51,10 +61,16 @@ object TcpCount {
                     conn.returnBuffer(item)
                 }
 
-                repeat(requests) { conn.write(response) }
-                if (requests > 0) conn.flush()
+                repeat(requests) {
+                    conn.write(response)
+                }
+                if (requests > 0) {
+                    conn.flush()
+                }
 
-                if (snapshot.isClosed) return
+                if (snapshot.isClosed) {
+                    return
+                }
             }
         }
 

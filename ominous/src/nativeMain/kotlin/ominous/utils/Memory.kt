@@ -52,14 +52,18 @@ private const val C_COPY_MIN = 256
 /** Copies [length] bytes between native addresses; the ranges may overlap. */
 internal fun copyMemory(src: Long, dst: Long, length: Long) {
     if (length >= C_COPY_MIN || (dst > src && dst < src + length)) {
-        if (length > 0) om_memmove(dst, src, length)
+        if (length > 0) {
+            om_memmove(dst, src, length)
+        }
         return
     }
+
     var i = 0L
     while (i + 8 <= length) {
         putLong(dst + i, getLong(src + i))
         i += 8
     }
+
     while (i < length) {
         putByte(dst + i, getByte(src + i))
         i++
@@ -69,14 +73,18 @@ internal fun copyMemory(src: Long, dst: Long, length: Long) {
 /** Copies from a heap array into native memory. */
 internal fun copyFromArray(src: ByteArray, srcOffset: Int, dst: Long, length: Int) {
     if (length >= C_COPY_MIN) {
-        src.usePinned { om_memmove(dst, it.addressOf(srcOffset).rawValue.toLong(), length.toLong()) }
+        src.usePinned {
+            om_memmove(dst, it.addressOf(srcOffset).rawValue.toLong(), length.toLong())
+        }
         return
     }
+
     var i = 0
     while (i + 8 <= length) {
         putLong(dst + i, src.getLongAt(srcOffset + i))
         i += 8
     }
+
     while (i < length) {
         putByte(dst + i, src[srcOffset + i])
         i++
@@ -86,14 +94,18 @@ internal fun copyFromArray(src: ByteArray, srcOffset: Int, dst: Long, length: In
 /** Copies from native memory into a heap array. */
 internal fun copyToArray(src: Long, dst: ByteArray, dstOffset: Int, length: Int) {
     if (length >= C_COPY_MIN) {
-        dst.usePinned { om_memmove(it.addressOf(dstOffset).rawValue.toLong(), src, length.toLong()) }
+        dst.usePinned {
+            om_memmove(it.addressOf(dstOffset).rawValue.toLong(), src, length.toLong())
+        }
         return
     }
+
     var i = 0
     while (i + 8 <= length) {
         dst.setLongAt(dstOffset + i, getLong(src + i))
         i += 8
     }
+
     while (i < length) {
         dst[dstOffset + i] = getByte(src + i)
         i++
@@ -105,11 +117,13 @@ internal fun zeroMemory(addr: Long, length: Long) {
         om_memset(addr, 0, length)
         return
     }
+
     var i = 0L
     while (i + 8 <= length) {
         putLong(addr + i, 0L)
         i += 8
     }
+
     while (i < length) {
         putByte(addr + i, 0)
         i++
