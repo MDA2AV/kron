@@ -144,6 +144,42 @@ class Reactor(val id: Int, private val config: ServerConfig) {
     }
 
     /**
+     * Whether [stopAccepting] was called. A handler can read it to end a keep-alive connection after its current
+     * response, rather than holding the reactor until the grace period runs out.
+     */
+    @Volatile
+    var draining = false
+        private set
+
+    /**
+     * Stops taking connections, from any thread: the listeners close, the open connections are served to their end,
+     * and once the last of them is gone the reactor stops by itself - at once, if there are none.
+     */
+    fun stopAccepting() {
+        if (!onReactorThread) {
+            post {
+                stopAccepting()
+            }
+
+            return
+        }
+
+        if (draining) {
+            return
+        }
+
+        draining = true
+        tcp?.stopAccepting()
+        stopIfDrained()
+    }
+
+    private fun stopIfDrained() {
+        if ((tcp?.openConnections ?: 0) == 0) {
+            stopRequested = true
+        }
+    }
+
+    /**
      * Asks the reactor to stop, from any thread: the loop finishes its pass, then [run] tears down on the
      * reactor thread. Join that thread to wait for it.
      */
@@ -194,6 +230,10 @@ class Reactor(val id: Int, private val config: ServerConfig) {
             ring.cqAdvance(ready)
 
             runDueTickers()
+
+            if (draining) {
+                stopIfDrained()
+            }
         }
     }
 

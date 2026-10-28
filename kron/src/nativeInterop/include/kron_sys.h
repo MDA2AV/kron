@@ -11,6 +11,7 @@
 #include <sched.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -200,6 +201,21 @@ static inline long kr_thread_start(void *(*entry)(void *), void *argument, const
 
 static inline int kr_thread_join(long thread) {
     return -pthread_join((pthread_t)thread, 0);
+}
+
+/* kr_thread_join, giving up after timeoutMs: 0 once the thread has ended, -ETIMEDOUT if it has not. */
+static inline int kr_thread_timed_join(long thread, long timeoutMs) {
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+
+    deadline.tv_sec += timeoutMs / 1000;
+    deadline.tv_nsec += (timeoutMs % 1000) * 1000000L;
+    if (deadline.tv_nsec >= 1000000000L) {
+        deadline.tv_sec++;
+        deadline.tv_nsec -= 1000000000L;
+    }
+
+    return -pthread_timedjoin_np((pthread_t)thread, 0, &deadline);
 }
 
 #endif

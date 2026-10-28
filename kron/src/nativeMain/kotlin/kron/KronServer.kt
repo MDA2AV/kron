@@ -6,6 +6,7 @@ import kotlinx.cinterop.asStableRef
 import kotlinx.cinterop.staticCFunction
 import kron.sys.kr_thread_join
 import kron.sys.kr_thread_start
+import kron.sys.kr_thread_timed_join
 
 /**
  * The host side, for the common case: [ServerConfig.reactorCount] reactors, each on its own thread named
@@ -64,6 +65,30 @@ class KronServer(
     override fun close() {
         reactors.forEach(Reactor::stop)
         join()
+    }
+
+    /**
+     * Stops gracefully: every reactor stops accepting at once, and stops by itself when its last open connection
+     * is gone. Those still serving after [gracePeriodMs] are stopped as [close] does, closing what is left. Returns
+     * once every reactor thread has ended.
+     */
+    fun close(gracePeriodMs: Long) {
+        reactors.forEach(Reactor::stopAccepting)
+
+        val deadline = Clock.monotonicMs() + gracePeriodMs
+        for (i in threads.indices) {
+            val thread = threads[i]
+            val remainingMs = deadline - Clock.monotonicMs()
+            if (thread == 0L || remainingMs <= 0) {
+                continue
+            }
+
+            if (kr_thread_timed_join(thread, remainingMs) == 0) {
+                threads[i] = 0L
+            }
+        }
+
+        close()
     }
 }
 
