@@ -16,7 +16,7 @@ kotlin {
             languageSettings.optIn("kotlinx.cinterop.ExperimentalForeignApi")
         }
         nativeMain.dependencies {
-            implementation(project(":ominous"))
+            implementation(project(":kron"))
         }
     }
 }

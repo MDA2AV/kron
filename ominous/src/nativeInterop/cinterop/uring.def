@@ -1,4 +1,0 @@
-package = ominous.sys
-headers = ominous_sys.h
-headerFilter = ominous_sys.h ominous/**
-compilerOpts = -D_GNU_SOURCE

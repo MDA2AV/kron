@@ -1,11 +1,11 @@
 package playground
 
-import ominous.OminousServer
-import ominous.Memory
-import ominous.RecvItem
-import ominous.ServerConfig
-import ominous.TcpConnection
-import ominous.TcpOptions
+import kron.KronServer
+import kron.Memory
+import kron.RecvItem
+import kron.ServerConfig
+import kron.TcpConnection
+import kron.TcpOptions
 
 /**
  * count - Tcp/Raw answering once per request instead of once per read: a request is anything ending in
@@ -74,7 +74,7 @@ object TcpCount {
             }
         }
 
-        val server = OminousServer(config, handler = ::handle).start()
+        val server = KronServer(config, handler = ::handle).start()
         log("[count] $reactors reactors on :$port")
         server.join()
     }

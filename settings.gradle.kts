@@ -11,6 +11,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ominous"
+rootProject.name = "kron"
 
-include("ominous", "playground")
+include("kron", "playground")

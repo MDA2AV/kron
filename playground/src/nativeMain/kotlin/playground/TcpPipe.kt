@@ -1,14 +1,14 @@
 package playground
 
-import ominous.OminousServer
-import ominous.ServerConfig
-import ominous.TcpConnection
-import ominous.TcpDuplexPipe
-import ominous.TcpOptions
+import kron.KronServer
+import kron.ServerConfig
+import kron.TcpConnection
+import kron.TcpDuplexPipe
+import kron.TcpOptions
 
 /**
  * pipe - Tcp/Raw through the pipe adapters, the Kotlin twin of Playground/Tcp/Pipe: the same response per read,
- * reading through [ominous.TcpPipeReader] and writing through [ominous.TcpPipeWriter], so the pair of samples
+ * reading through [kron.TcpPipeReader] and writing through [kron.TcpPipeWriter], so the pair of samples
  * measures what the adapters cost.
  */
 object TcpPipe {
@@ -61,7 +61,7 @@ object TcpPipe {
             }
         }
 
-        val server = OminousServer(config, handler = ::handle).start()
+        val server = KronServer(config, handler = ::handle).start()
         log("[pipe] $reactors reactors on :$port, $bodyBytes-byte body")
         server.join()
     }

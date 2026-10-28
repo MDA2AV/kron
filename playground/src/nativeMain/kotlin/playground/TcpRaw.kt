@@ -1,13 +1,13 @@
 package playground
 
-import ominous.OminousServer
-import ominous.RecvItem
-import ominous.ServerConfig
-import ominous.TcpConnection
-import ominous.TcpOptions
+import kron.KronServer
+import kron.RecvItem
+import kron.ServerConfig
+import kron.TcpConnection
+import kron.TcpOptions
 
 /**
- * raw - a complete ominous server in one file, the Kotlin twin of Playground/Tcp/Raw: one pre-encoded response
+ * raw - a complete kron server in one file, the Kotlin twin of Playground/Tcp/Raw: one pre-encoded response
  * per read, no parsing, so it is the throughput baseline the other samples are read against.
  *
  *     ./gradlew :playground:linkReleaseExecutableLinuxX64
@@ -54,7 +54,7 @@ object TcpRaw {
                 // io_uring recv. The continuation resumes inline on this thread - no thread pool.
                 val snapshot = conn.read()
 
-                // ominous hands you raw bytes and stays out of HTTP: this sample returns every buffer unread.
+                // kron hands you raw bytes and stays out of HTTP: this sample returns every buffer unread.
                 while (conn.tryGetItem(snapshot, item)) {
                     conn.returnBuffer(item)
                 }
@@ -69,7 +69,7 @@ object TcpRaw {
             }
         }
 
-        val server = OminousServer(config, handler = ::handle).start()
+        val server = KronServer(config, handler = ::handle).start()
         log("[raw] $reactors reactors on :$port, $bodyBytes-byte body")
         server.join()
     }
