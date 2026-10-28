@@ -8,10 +8,12 @@ fun main(args: Array<String>) {
         "tcp-raw" -> TcpRaw.run()
         "tcp-pipe" -> TcpPipe.run()
         "tcp-count" -> TcpCount.run()
+        "tcp-incremental" -> TcpIncremental.run()
+        "tcp-upload" -> TcpUpload.run()
         "tls-raw" -> TlsRaw.run()
         "tls-pipe" -> TlsPipe.run()
         else -> {
-            log("unknown sample '$sample'; known: tcp-raw, tcp-pipe, tcp-count, tls-raw, tls-pipe")
+            log("unknown sample '$sample'; known: tcp-raw, tcp-pipe, tcp-count, tcp-incremental, tcp-upload, tls-raw, tls-pipe")
             exitProcess(2)
         }
     }

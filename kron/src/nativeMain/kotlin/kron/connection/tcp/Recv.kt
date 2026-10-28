@@ -103,6 +103,26 @@ internal class RecvQueue(capacity: Int) {
         return true
     }
 
+    /**
+     * Grows the last item by [length] when the new bytes continue it - the same buffer of the same life, starting
+     * where it ends - and no snapshot reaches it yet. [visibleTail] is the tail the last snapshot took, and a
+     * consumer only takes items before its snapshot's tail, so nothing can be reading this one. Producer side.
+     */
+    fun tryExtendLast(address: Long, length: Int, bufferId: Int, generation: Int, visibleTail: Long): Boolean {
+        val t = tail
+        if (t <= head || t - 1 < visibleTail) {
+            return false
+        }
+
+        val i = ((t - 1) and mask).toInt()
+        if (bufferIds[i] != bufferId || generations[i] != generation || addresses[i] + lengths[i] != address) {
+            return false
+        }
+
+        lengths[i] += length
+        return true
+    }
+
     /** Takes the next item if it lies before [tailSnapshot]. */
     fun tryDequeueUntil(tailSnapshot: Long, item: RecvItem): Boolean {
         val h = head
