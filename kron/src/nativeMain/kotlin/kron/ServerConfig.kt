@@ -4,6 +4,9 @@ package kron
  * One reactor's settings; every reactor of a server takes the same instance.
  *
  * @property reactorCount how many reactors [KronServer] starts, one thread and one ring each.
+ * @property pinReactors each reactor runs alone on one CPU: reactor i on the i-th CPU its thread may run on (the
+ *   starting thread's affinity, which a container's cpuset or taskset narrows). Unpinned, the scheduler can stack
+ *   two reactors on one CPU while another idles. More reactors than CPUs is refused at [KronServer.start].
  * @property ringEntries SQ entries per ring; the kernel sizes the CQ at twice that.
  * @property recvBufferSize bytes per provided buffer of the reactor's shared recv group.
  * @property recvSlots buffers in that group, a power of two up to 32768.
@@ -12,6 +15,7 @@ package kron
  */
 class ServerConfig(
     val reactorCount: Int = 12,
+    val pinReactors: Boolean = false,
     val ringEntries: Int = 8192,
     val recvBufferSize: Int = 32 * 1024,
     val recvSlots: Int = 4096,

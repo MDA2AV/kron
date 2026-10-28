@@ -1,6 +1,7 @@
 package kron
 
 import kron.sys.kr_aligned_alloc
+import kron.sys.kr_allowed_cpus
 import kron.sys.kr_bind
 import kron.sys.kr_close
 import kron.sys.kr_eventfd
@@ -112,6 +113,24 @@ internal object Native {
 
     /** Pins the calling thread to one CPU. */
     fun pinCurrentThread(cpu: Int): Int = kr_pin_current_thread(cpu)
+
+    /** The CPUs the calling thread may run on, ascending: its affinity mask, as a cpuset or taskset narrows it. */
+    fun allowedCpus(): IntArray {
+        val out = malloc(4L * CPU_SETSIZE)
+        try {
+            val count = kr_allowed_cpus(out, CPU_SETSIZE)
+            if (count < 0) {
+                throw IllegalStateException("sched_getaffinity failed with errno ${-count}")
+            }
+
+            return IntArray(count) { getInt(out + 4L * it) }
+        } finally {
+            free(out)
+        }
+    }
+
+    // glibc's fixed cpu_set_t: CPUs 0 to 1023.
+    private const val CPU_SETSIZE = 1024
 
     // errno values the callers compare against.
     const val EPERM = 1

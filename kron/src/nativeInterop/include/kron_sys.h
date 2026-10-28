@@ -126,6 +126,24 @@ static inline int kr_pin_current_thread(int cpu) {
     return sched_setaffinity(0, sizeof set, &set) < 0 ? -errno : 0;
 }
 
+/* The CPUs the calling thread may run on, ascending, as ints at out (up to max): how many, or a negative errno. */
+static inline int kr_allowed_cpus(long out, int max) {
+    cpu_set_t set;
+    if (sched_getaffinity(0, sizeof set, &set) < 0) {
+        return -errno;
+    }
+
+    int *cpus = (int *)out;
+    int count = 0;
+    for (int cpu = 0; cpu < CPU_SETSIZE && count < max; cpu++) {
+        if (CPU_ISSET(cpu, &set)) {
+            cpus[count++] = cpu;
+        }
+    }
+
+    return count;
+}
+
 /* A named thread running a Kotlin entry point: its handle, or a negative errno. */
 static inline long kr_thread_start(void *(*entry)(void *), void *argument, const char *name) {
     pthread_t thread;
