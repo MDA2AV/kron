@@ -40,7 +40,8 @@ internal inline fun putLong(addr: Long, v: Long) {
 
 // The kernel's side of each ring index is smp_load_acquire / smp_store_release. Ours are plain: with
 // SINGLE_ISSUER | DEFER_TASKRUN and no SQPOLL the kernel reads and writes the rings only inside this thread's
-// own io_uring_enter, and that call is opaque to the compiler, so nothing moves across it.
+// own io_uring_enter, and that call is opaque to the compiler, so nothing moves across it. The weaker ordering of
+// arm64 does not change that: a CPU sees its own stores in order, and a migration in between is a full barrier.
 internal inline fun getIntAcquire(addr: Long): Int = getInt(addr)
 internal inline fun putIntRelease(addr: Long, v: Int) = putInt(addr, v)
 internal inline fun putShortRelease(addr: Long, v: Short) = putShort(addr, v)

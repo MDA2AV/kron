@@ -10,6 +10,7 @@ import kotlinx.cinterop.usePinned
 import kotlin.native.concurrent.ThreadLocal
 import kotlin.time.TimeSource
 import platform.posix.EINTR
+import platform.posix._SC_PAGESIZE
 import platform.posix.O_CLOEXEC
 import platform.posix.O_RDONLY
 import platform.posix.close
@@ -19,6 +20,7 @@ import platform.posix.open
 import platform.posix.read
 import platform.posix.sched_yield
 import platform.posix.stderr
+import platform.posix.sysconf
 import platform.posix.uname
 import platform.posix.usleep
 import platform.posix.utsname
@@ -42,6 +44,12 @@ internal fun spinWait() {
 internal fun sleepMs(milliseconds: Long) {
     usleep((milliseconds * 1000).toUInt())
 }
+
+/** The kernel's page size: 4 KiB on x86-64, and 4, 16 or 64 KiB on arm64, as the kernel was built. */
+internal val pageSize: Long = sysconf(_SC_PAGESIZE)
+
+/** [size] rounded up to whole pages. */
+internal fun wholePages(size: Long): Long = (size + pageSize - 1) / pageSize * pageSize
 
 /** The running kernel's release, as `uname -r` prints it. */
 internal fun kernelRelease(): String = memScoped {

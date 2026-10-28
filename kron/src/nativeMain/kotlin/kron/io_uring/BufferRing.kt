@@ -23,11 +23,14 @@ internal class BufferRing(
 
     private val mask = entries - 1
 
-    /** The ring the kernel reads offers from: page aligned, as registration requires. */
-    private val ringAddr: Long = Native.alignedAlloc(PAGE, entries.toLong() * IoUring.BUF_SIZE)
+    /**
+     * The ring the kernel reads offers from: aligned to the kernel's page, as registration requires, and that is
+     * not 4 KiB on every arm64 kernel.
+     */
+    private val ringAddr: Long = Native.alignedAlloc(pageSize, wholePages(entries.toLong() * IoUring.BUF_SIZE))
 
     /** Buffer `bid` lives at `slab + bid * bufferSize`. */
-    val slab: Long = Native.alignedAlloc(PAGE, entries.toLong() * bufferSize)
+    val slab: Long = Native.alignedAlloc(pageSize, wholePages(entries.toLong() * bufferSize))
 
     private var tail = 0
     private var registered = false
@@ -100,9 +103,5 @@ internal class BufferRing(
         unregister()
         Native.free(ringAddr)
         Native.free(slab)
-    }
-
-    private companion object {
-        const val PAGE = 4096L
     }
 }
