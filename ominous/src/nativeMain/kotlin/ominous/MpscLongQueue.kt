@@ -1,0 +1,58 @@
+package ominous
+
+import kotlin.concurrent.atomics.AtomicLong
+import kotlin.concurrent.atomics.AtomicLongArray
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+
+/**
+ * Bounded multi-producer, single-consumer queue of non-negative longs (Vyukov): other threads hand the
+ * reactor packed values - buffer ids - without allocating per item.
+ */
+@OptIn(ExperimentalAtomicApi::class)
+internal class MpscLongQueue(capacity: Int) {
+    init {
+        require(capacity > 0 && capacity and (capacity - 1) == 0) { "capacity must be a power of two" }
+    }
+
+    private val mask = (capacity - 1).toLong()
+    private val sequence = AtomicLongArray(capacity)
+    private val values = LongArray(capacity)
+    private val enqueuePos = AtomicLong(0L)
+    private var dequeuePos = 0L
+
+    init {
+        for (i in 0 until capacity) sequence.storeAt(i, i.toLong())
+    }
+
+    /** False when the queue is full. */
+    fun offer(value: Long): Boolean {
+        var pos = enqueuePos.load()
+        while (true) {
+            val index = (pos and mask).toInt()
+            val diff = sequence.loadAt(index) - pos
+            if (diff == 0L) {
+                if (enqueuePos.compareAndSet(pos, pos + 1)) {
+                    values[index] = value
+                    sequence.storeAt(index, pos + 1)
+                    return true
+                }
+                pos = enqueuePos.load()
+            } else if (diff < 0L) {
+                return false
+            } else {
+                pos = enqueuePos.load()
+            }
+        }
+    }
+
+    /** The next value, or -1 when the queue is empty. The consumer's thread only. */
+    fun poll(): Long {
+        val pos = dequeuePos
+        val index = (pos and mask).toInt()
+        if (sequence.loadAt(index) - (pos + 1) < 0L) return -1
+        val value = values[index]
+        sequence.storeAt(index, pos + mask + 1)
+        dequeuePos = pos + 1
+        return value
+    }
+}

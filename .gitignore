@@ -25,3 +25,12 @@ replay_pid*
 
 # Kotlin Gradle plugin data, see https://kotlinlang.org/docs/whatsnew20.html#new-directory-for-kotlin-data-in-gradle-projects
 .kotlin/
+# The Gradle wrapper is committed, so ./gradlew works from a fresh clone
+!gradle/wrapper/gradle-wrapper.jar
+
+# Gradle and IDE output
+.gradle/
+build/
+out/
+.idea/
+*.iml
