@@ -1,0 +1,4 @@
+package = kron.boringssl
+headers = openssl/ssl.h openssl/err.h openssl/pem.h openssl/x509.h openssl/evp.h openssl/hmac.h openssl/digest.h openssl/bio.h
+headerFilter = openssl/**
+staticLibraries = libssl.a libcrypto.a
