@@ -85,8 +85,13 @@ class Reactor(val id: Int, private val config: ServerConfig) {
         currentReactor = this
 
         // Its own catch: there is nothing to tear down until the ring exists, and a refusal (an old kernel,
-        // a seccomp profile) is a fault the host must hear of.
+        // a seccomp profile) is a fault the host must hear of. A pinned reactor moves to its CPU first, so the
+        // ring is made where it will run.
         try {
+            if (config.pinReactors) {
+                pinToOwnCpu()
+            }
+
             ring = Ring.create(config.ringEntries)
         } catch (e: Throwable) {
             val fault = onFault ?: throw e
@@ -122,6 +127,19 @@ class Reactor(val id: Int, private val config: ServerConfig) {
             fault(this, e)
         } finally {
             teardown()
+        }
+    }
+
+    // Reactor i takes the i-th CPU of the affinity its thread inherited from the one that started it.
+    private fun pinToOwnCpu() {
+        val cpus = Native.allowedCpus()
+        if (id >= cpus.size) {
+            throw IllegalStateException("pinReactors: reactor $id has no CPU of its own, ${cpus.size} allowed")
+        }
+
+        val rc = Native.pinCurrentThread(cpus[id])
+        if (rc < 0) {
+            throw IllegalStateException("pinReactors: could not pin reactor $id to CPU ${cpus[id]}, errno ${-rc}")
         }
     }
 

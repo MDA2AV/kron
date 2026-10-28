@@ -1,4 +1,4 @@
 package = kron.sys
 headers = kron_sys.h
-headerFilter = kron_sys.h kron/**
+headerFilter = kron_sys.h linux/io_uring.h linux/io_uring/**
 compilerOpts = -D_GNU_SOURCE

@@ -28,6 +28,14 @@ class KronServer(
     private val threads = LongArray(reactors.size)
 
     fun start(): KronServer {
+        // Refused here rather than as a reactor fault: the threads inherit this thread's affinity.
+        if (config.pinReactors) {
+            val cpus = Native.allowedCpus().size
+            if (cpus < reactors.size) {
+                throw IllegalStateException("pinReactors needs a CPU per reactor: ${reactors.size} reactors, $cpus allowed")
+            }
+        }
+
         for ((i, reactor) in reactors.withIndex()) {
             val ref = StableRef.create(reactor)
             val thread = kr_thread_start(reactorEntry, ref.asCPointer(), "reactor-${reactor.id}")

@@ -49,7 +49,7 @@ import kotlin.test.assertEquals
 
 /**
  * IoUring.kt keeps the JVM port's literals, so the ring code stays line for line with it. These check every one
- * against the kernel's own header (include/kron/io_uring.h, v6.14) as cinterop compiled it: values compared,
+ * against the kernel's own header (include/linux/io_uring.h, Linux v7.3) as cinterop compiled it: values compared,
  * and each struct written through its generated fields and read back at the offsets the ring code uses.
  */
 class IoUringLayoutTest {
