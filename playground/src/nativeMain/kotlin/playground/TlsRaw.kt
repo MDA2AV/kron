@@ -7,10 +7,8 @@ import kron.RecvItem
 import kron.ServerConfig
 import kron.TcpConnection
 import kron.TcpOptions
-import kron.tls.TlsOptions
 import kron.tls.TlsService
 import kron.tls.TlsSession
-import kotlin.system.exitProcess
 
 /**
  * tls-raw - TLS on BoringSSL both ways (or kernel TLS with the knobs), the Kotlin twin of Playground/Tls/OpenSsl: one
@@ -20,22 +18,13 @@ import kotlin.system.exitProcess
  *     playground/build/bin/linuxX64/releaseExecutable/playground.kexe tls-raw
  *     curl -k https://127.0.0.1:8443/
  *
- * PLAYGROUND_TLS_CERT and PLAYGROUND_TLS_KEY name a PEM certificate and key; without them it serves a self-signed
- * certificate made at startup. PLAYGROUND_KTLS_TX=1 hands encryption to the kernel, PLAYGROUND_KTLS_RX=1 decryption
- * as well.
+ * The certificate and the kernel TLS knobs are [TlsSetup]'s.
  */
 object TlsRaw {
     fun run() {
         val port = Env.port(8443)
         val reactors = Env.reactors(Env.processors())
         val bodyBytes = Env.body(8 * 1024)   // TLS cost is per byte, so a 2-byte "ok" would hide it
-        val certPath = Env.string("PLAYGROUND_TLS_CERT")
-        val keyPath = Env.string("PLAYGROUND_TLS_KEY")
-        if ((certPath == null) != (keyPath == null)) {
-            log("[tls-raw] set both PLAYGROUND_TLS_CERT and PLAYGROUND_TLS_KEY, or neither for a self-signed certificate")
-            exitProcess(2)
-        }
-
         val config = ServerConfig(
             reactorCount = reactors,
             ringEntries = 8192,
@@ -50,26 +39,7 @@ object TlsRaw {
             ),
         )
 
-        val kernelTx = Env.bool("PLAYGROUND_KTLS_TX", false)
-        val kernelRx = Env.bool("PLAYGROUND_KTLS_RX", false)
-        val tlsOptions = if (certPath != null && keyPath != null) {
-            TlsOptions(
-                certificatePath = certPath,
-                keyPath = keyPath,
-                alpn = listOf("http/1.1"),
-                kernelTx = kernelTx,
-                kernelRx = kernelRx,
-            )
-        } else {
-            val (certificate, key) = SelfSigned.generate()
-            TlsOptions(
-                certificatePem = certificate,
-                keyPem = key,
-                alpn = listOf("http/1.1"),
-                kernelTx = kernelTx,
-                kernelRx = kernelRx,
-            )
-        }
+        val (tlsOptions, setup) = TlsSetup.options("tls-raw")
 
         val fill = "kron-ktls-payload ".encodeToByteArray()
         val body = ByteArray(bodyBytes) { fill[it % fill.size] }
@@ -121,17 +91,13 @@ object TlsRaw {
 
         val server = KronServer(
             config,
-            onStart = { reactor -> services[reactor.id] = TlsService.start(reactor, tlsOptions) },
+            onStart = { reactor ->
+                services[reactor.id] = TlsService.start(reactor, tlsOptions)
+            },
             handler = ::handle,
         ).start()
 
-        val mode = when {
-            tlsOptions.kernelRx -> "kernel tx+rx"
-            tlsOptions.kernelTx -> "kernel tx"
-            else -> "BoringSSL both ways"
-        }
-        val source = certPath ?: "self-signed for localhost"
-        log("[tls-raw] $reactors reactors on :$port, $bodyBytes-byte body, cert $source, $mode")
+        log("[tls-raw] $reactors reactors on :$port, $bodyBytes-byte body, $setup")
         server.join()
     }
 

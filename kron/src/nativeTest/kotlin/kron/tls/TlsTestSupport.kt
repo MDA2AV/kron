@@ -264,6 +264,8 @@ class TlsTestClient(
         }
     }
 
+    fun write(text: String) = write(text.encodeToByteArray())
+
     /** Up to [length] bytes; -1 once the server has closed the session. */
     fun read(into: ByteArray, offset: Int, length: Int): Int {
         val deadline = Clock.monotonicMs() + TIMEOUT_MS
