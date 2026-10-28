@@ -225,6 +225,22 @@ class AlpnTest {
     }
 
     @Test
+    fun `a protocol list past 65535 bytes is refused at start - and one at the limit serves its last name`() {
+        // The callback reads the list behind a u16 total, as a ClientHello carries its own: 255 names of 255 bytes
+        // and one of 254 fill it to the byte.
+        val full = List(255) { i -> "p$i".padEnd(255, 'x') } + "last".padEnd(254, 'y')
+        assertEquals(65535, full.sumOf { 1 + it.length })
+
+        val message = refusal(TlsOptions(certificatePath = cert, keyPath = key, alpn = full + "z"))?.message
+        assertTrue(message?.contains("at most 65535") == true, "a list of 65537 bytes was not refused: $message")
+
+        withAlpnServer(full) { port ->
+            val (told, _) = ask(port, listOf(full.last()))
+            assertEquals(full.last(), told, "the last name of a list at the limit must still negotiate")
+        }
+    }
+
+    @Test
     fun `a truncated or empty offer entry is declined - never matched or overread`() {
         // BoringSSL validates the ClientHello's list while parsing it - an empty or truncated entry is a decode_error -
         // and hands the callback only what passed, so no handshake can deliver these. The select callback is called
