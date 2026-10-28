@@ -4,6 +4,7 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 
 /**
@@ -37,17 +38,26 @@ class RingTimer(private val reactor: Reactor) {
 
         return suspendCoroutineUninterceptedOrReturn { cont ->
             check(waiter == null) { "RingTimer already waiting" }
-            waiter = cont
+
+            // The waiter is set after the submit, so a submit that throws leaves the timer free. The completion
+            // cannot come in between: it is only dispatched on the loop's next pass.
             reactor.submitTimeout(nanoseconds, completion)
+            waiter = cont
             COROUTINE_SUSPENDED
         }
     }
 
+    // A check that fails in the posted task goes back to the caller: the reactor survives a task that throws, so
+    // nothing else would ever resume it.
     private suspend fun delayOffReactor(nanoseconds: Long): Int = suspendCoroutine { cont ->
         reactor.post {
-            check(waiter == null) { "RingTimer already waiting" }
-            waiter = cont
-            reactor.submitTimeout(nanoseconds, completion)
+            try {
+                check(waiter == null) { "RingTimer already waiting" }
+                reactor.submitTimeout(nanoseconds, completion)
+                waiter = cont
+            } catch (e: Throwable) {
+                cont.resumeWithException(e)
+            }
         }
     }
 
