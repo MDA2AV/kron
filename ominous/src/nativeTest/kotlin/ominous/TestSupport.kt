@@ -1,13 +1,17 @@
 package ominous
 
+import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.IntVar
+import kotlinx.cinterop.StableRef
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
+import kotlinx.cinterop.asStableRef
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.sizeOf
+import kotlinx.cinterop.staticCFunction
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
 import platform.posix.AF_INET
@@ -16,6 +20,7 @@ import platform.posix.MSG_NOSIGNAL
 import platform.posix.SHUT_WR
 import platform.posix.SOCK_STREAM
 import platform.posix.SOL_SOCKET
+import platform.posix.SO_RCVBUF
 import platform.posix.SO_RCVTIMEO
 import platform.posix.errno
 import platform.posix.ioctl
@@ -29,6 +34,8 @@ import platform.posix.timeval
 import platform.posix.usleep
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import ominous.sys.om_thread_join
+import ominous.sys.om_thread_start
 
 // What the JVM tests took from java.util.concurrent and java.net.Socket.
 
@@ -80,6 +87,13 @@ class TestSocket : AutoCloseable {
         tv.tv_sec = (milliseconds / 1000).convert()
         tv.tv_usec = (milliseconds % 1000 * 1000).convert()
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, tv.ptr, sizeOf<timeval>().convert())
+    }
+
+    /** The kernel's receive buffer, before [connect]: small, so a peer's send backs up soon. */
+    fun setReceiveBuffer(bytes: Int) = memScoped {
+        val size = alloc<IntVar>()
+        size.value = bytes
+        setsockopt(fd, SOL_SOCKET, SO_RCVBUF, size.ptr, sizeOf<IntVar>().convert())
     }
 
     fun write(bytes: ByteArray) {
@@ -170,5 +184,75 @@ class TestSocket : AutoCloseable {
     private companion object {
         // SIOCOUTQ: bytes written and not yet acknowledged (asm-generic/ioctls.h).
         const val TIOCOUTQ = 0x5411UL
+    }
+}
+
+/** Threads a test starts, joined by [joinAll]. */
+class TestThreads {
+    private val started = MpscQueue<Long>()
+
+    /** Runs [block] on a new thread. */
+    fun start(block: () -> Unit) {
+        val ref = StableRef.create(block)
+        val thread = om_thread_start(threadEntry, ref.asCPointer(), "test")
+        check(thread > 0) { "pthread_create failed with errno ${-thread}" }
+        started.offer(thread)
+    }
+
+    fun joinAll() {
+        while (true) om_thread_join(started.poll() ?: return)
+    }
+}
+
+private val threadEntry = staticCFunction<COpaquePointer?, COpaquePointer?> { argument ->
+    val ref = argument!!.asStableRef<() -> Unit>()
+    val block = ref.get()
+    ref.dispose()
+    try {
+        block()
+    } catch (e: Throwable) {
+        println("test thread failed: ${e.stackTraceToString()}")
+    }
+    null
+}
+
+/** One reactor on a port the kernel picks, running [handler], started and listening. */
+class TestServer(config: ServerConfig, handler: suspend (TcpConnection) -> Unit) : AutoCloseable {
+    private val ready = Latch(1)
+    private val server = OminousServer(config, onStart = { ready.countDown() }, handler = handler).start()
+
+    init {
+        check(ready.await(10_000)) { "the reactor never started" }
+    }
+
+    val reactor: Reactor get() = server.reactors[0]
+    val port: Int = server.reactors[0].listenPorts[0]
+
+    fun connect(receiveTimeoutMs: Int = 5_000): TestSocket = TestSocket().also {
+        it.setReceiveTimeout(receiveTimeoutMs)
+        it.connect(port)
+    }
+
+    override fun close() = server.close()
+}
+
+/** A one-reactor config for tests: small rings and buffers unless a test needs otherwise. */
+fun testConfig(
+    tcp: TcpOptions = TcpOptions(port = 0),
+    recvSlots: Int = 64,
+    recvBufferSize: Int = 4096,
+): ServerConfig = ServerConfig(reactorCount = 1, ringEntries = 256, recvBufferSize = recvBufferSize, recvSlots = recvSlots, tcp = tcp)
+
+/** Writes back everything it receives, straight from the recv buffers, until the peer is gone. */
+suspend fun echo(conn: TcpConnection) {
+    val item = RecvItem()
+    while (true) {
+        val snapshot = conn.read()
+        while (conn.tryGetItem(snapshot, item)) {
+            if (item.hasBuffer) conn.write(item.address, item.length)
+            conn.returnBuffer(item)
+        }
+        conn.flush()
+        if (snapshot.isClosed) return
     }
 }
