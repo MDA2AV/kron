@@ -58,36 +58,57 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
         return listenPorts[0]
     }
 
-    // ---- Shared provided-buffer group -------------------------------------------------------------------
+    // ---- Provided buffers: one group shared by the reactor's connections, or a ring per connection ------
 
+    // The shared group; null in incremental mode, where each connection has a ConnectionRing.
     private var bufRing: BufferRing? = null
+
+    private val incremental = config.incremental
 
     // Set by every buffer return, so the loop re-arms recvs parked on -ENOBUFS - including when the return
     // happened inline during dispatch, before the batch's trailing ENOBUFS was even seen.
     private var buffersReturned = false
 
-    // Off-reactor returns; the reactor stages them all, then publishes the tail once.
+    // Off-reactor returns: buffer ids of the shared group, or in incremental mode a connection's slice packed
+    // fd << 32 | gen << 16 | bid. The reactor applies them all, then publishes once.
     private val returnQ = MpscLongQueue(1 shl 14)
 
     fun initBufferRing() {
-        bufRing = BufferRing(reactor.ring, BGID, config.recvSlots, config.recvBufferSize)
-    }
-
-    fun returnBuffer(bid: Int) {
-        if (reactor.onReactorThread) {
-            returnBufferDirect(bid)
+        if (incremental != null) {
+            initIncremental(incremental)
             return
         }
 
-        while (!returnQ.offer(bid.toLong())) {
+        val shared = BufferRing(reactor.ring, config.recvSlots, config.recvBufferSize)
+        val rc = shared.register(BGID)
+        if (rc < 0) {
+            shared.close()
+            throw IllegalStateException(
+                "IORING_REGISTER_PBUF_RING failed with errno ${-rc} (bgid $BGID, ${config.recvSlots} entries)"
+            )
+        }
+
+        bufRing = shared
+    }
+
+    /** Hands back a buffer [conn] took in its life [gen]: to the shared group, or to the connection's own ring. */
+    fun returnBuffer(conn: TcpConnection, bid: Int, gen: Int) {
+        val value = if (incremental == null) bid.toLong() else packSlice(conn.clientFd, gen, bid)
+        if (reactor.onReactorThread) {
+            applyReturn(value)
+            return
+        }
+
+        while (!returnQ.offer(value)) {
             spinWait()
         }
 
-        // Without the wake a queued return waits for an unrelated CQE; if the group drains meanwhile, recvs
+        // Without the wake a queued return waits for an unrelated CQE; if the buffers run dry meanwhile, recvs
         // fail with ENOBUFS.
         reactor.wake()
     }
 
+    // A shared buffer, back from the reactor's own recv path.
     fun returnBufferDirect(bid: Int) {
         val ring = bufRing!!
         ring.add(bid)
@@ -96,19 +117,91 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
     }
 
     fun drainReturnQ() {
-        var bid = returnQ.poll()
-        if (bid < 0) {
+        var value = returnQ.poll()
+        while (value >= 0) {
+            applyReturn(value)
+            value = returnQ.poll()
+        }
+    }
+
+    private fun applyReturn(value: Long) {
+        if (incremental == null) {
+            returnBufferDirect(value.toInt())
             return
         }
 
-        val ring = bufRing!!
-        while (bid >= 0) {
-            ring.add(bid.toInt())
-            bid = returnQ.poll()
+        // The generation also turns away a slice of the fd's previous tenant, whose ring has since been reset.
+        val fd = (value ushr 32).toInt()
+        val gen = ((value ushr 16) and 0xFFFF).toInt()
+        val bid = (value and 0xFFFF).toInt()
+        val ring = connAt(fd, gen)?.ring ?: return
+        if (ring.sliceReturned(bid)) {
+            buffersReturned = true
+        }
+    }
+
+    private fun packSlice(fd: Int, gen: Int, bid: Int): Long =
+        (fd.toLong() shl 32) or ((gen and 0xFFFF).toLong() shl 16) or (bid.toLong() and 0xFFFF)
+
+    // ---- Incremental mode: a ring per connection --------------------------------------------------------
+
+    // Free buffer group ids for connections' rings, 2 up to maxConnections + 1: the shared group's 1 stays unused.
+    private var freeGids = IntArray(0)
+    private var freeGidCount = 0
+    private var shedReported = false
+
+    private fun initIncremental(options: IncrementalOptions) {
+        // Refused at start rather than at the first accept: a kernel before 6.12 has no IOU_PBUF_RING_INC.
+        val probe = BufferRing(reactor.ring, 1, 64, incremental = true)
+        val rc = probe.register(BGID)
+        probe.close()
+        if (rc == -Native.EINVAL) {
+            throw IllegalStateException(
+                "incremental receive mode needs Linux 6.12 or newer (IOU_PBUF_RING_INC); this is ${kernelRelease()}"
+            )
+        }
+        if (rc < 0) {
+            throw IllegalStateException("registering an incremental buffer ring failed with errno ${-rc}")
         }
 
-        ring.publish()
-        buffersReturned = true
+        freeGids = IntArray(options.maxConnections) { options.maxConnections + 1 - it }
+        freeGidCount = options.maxConnections
+    }
+
+    // Gives [conn] a ring of its own, registered: false when the connection has to be shed instead - at the cap,
+    // or short of locked memory - so the reactor goes on.
+    private fun setupConnectionRing(conn: TcpConnection, options: IncrementalOptions): Boolean {
+        if (freeGidCount == 0) {
+            reportShed("at the cap of ${options.maxConnections} connections (IncrementalOptions.maxConnections)")
+            return false
+        }
+
+        val gid = freeGids[--freeGidCount]
+        val ring = conn.ring ?: ConnectionRing(reactor.ring, options.recvSlots, options.recvBufferSize).also {
+            conn.ring = it
+        }
+
+        val rc = ring.register(gid)
+        if (rc < 0) {
+            freeGids[freeGidCount++] = gid
+            if (rc != -Native.ENOMEM) {
+                throw IllegalStateException("registering a connection's buffer ring failed with errno ${-rc}")
+            }
+
+            // The kernel pins the ring against RLIMIT_MEMLOCK: the host's limit, not a fault.
+            reportShed("registering its buffer ring failed with ENOMEM (raise RLIMIT_MEMLOCK, `ulimit -l`)")
+            return false
+        }
+
+        return true
+    }
+
+    // Once until an accept is served again: a full reactor sheds every connection that arrives meanwhile.
+    private fun reportShed(why: String) {
+        if (!shedReported) {
+            shedReported = true
+            printErr("[r${reactor.id}] connection shed: $why")
+        }
     }
 
     // ---- Connection table -------------------------------------------------------------------------------
@@ -149,10 +242,11 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
         )
     }
 
-    private fun submitRecv(fd: Int, gen: Int) {
+    // From [bgid]: the shared group, or the connection's own ring.
+    private fun submitRecv(fd: Int, gen: Int, bgid: Int) {
         IoUring.prep(
             reactor.getSqeOrFlush(), IoUring.OP_RECV, fd, 0L, 0, 0L, tag(KIND_TCP_RECV, gen, fd),
-            flags = IoUring.IOSQE_BUFFER_SELECT, ioprio = IoUring.RECV_MULTISHOT, bufIndex = BGID,
+            flags = IoUring.IOSQE_BUFFER_SELECT, ioprio = IoUring.RECV_MULTISHOT, bufIndex = bgid,
         )
     }
 
@@ -193,11 +287,23 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
             val conn = pool.removeLastOrNull()?.setFd(res)
                 ?: TcpConnection(this, res, options.writeSlabSize, options.recvQueueEntries)
 
+            if (incremental != null && !setupConnectionRing(conn, incremental)) {
+                // Shed: never tracked nor handed to a handler, so straight back to the pool.
+                pool.addLast(conn)
+                Native.close(res)
+                if (!more) {
+                    submitAccept(listenFd)
+                }
+
+                return
+            }
+            shedReported = false
+
             track(res, conn)
             conn.initRefs()
             conn.listenerPort = portOf(listenFd)
             conn.sendFlags = sendOpFlags
-            submitRecv(res, conn.generation and 0xFFFF)
+            submitRecv(res, conn.generation and 0xFFFF, conn.ring?.bgid ?: BGID)
 
             // Inline, until its first suspension: the recv above is not submitted yet, so its first read parks.
             reactor.startHandler(conn)
@@ -231,6 +337,11 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
     private val recvStarved = ArrayList<Long>()
 
     fun onRecv(fd: Int, gen: Int, res: Int, flags: Int) {
+        if (incremental != null) {
+            onRecvIncremental(fd, gen, res, flags)
+            return
+        }
+
         val hasBuf = flags and IoUring.CQE_F_BUFFER != 0
         val bid = if (hasBuf) flags ushr IoUring.CQE_BUFFER_SHIFT else -1
 
@@ -275,7 +386,47 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
         }
 
         if (flags and IoUring.CQE_F_MORE == 0) {
-            submitRecv(fd, gen)
+            submitRecv(fd, gen, BGID)
+        }
+    }
+
+    // Incremental mode: the slice lands at its buffer's running offset in the connection's own ring.
+    private fun onRecvIncremental(fd: Int, gen: Int, res: Int, flags: Int) {
+        val conn = connAt(fd, gen)
+
+        if (res == -Native.ENOBUFS) {
+            // The connection's own ring ran dry: a body larger than the ring while its reader still holds the
+            // buffers. Only this connection waits - its bytes stay in the kernel and TCP slows its peer - until a
+            // buffer comes back and the loop re-arms the recv.
+            if (conn != null) {
+                conn.readParkedMs = reactor.nowMs   // the peer sent; the wait is ours, so the clock restarts
+                recvStarved.add((gen.toLong() shl 32) or (fd.toLong() and 0xFFFF_FFFFL))
+            }
+
+            return
+        }
+
+        if (res <= 0) {
+            // Peer EOF or recv error: the reactor owns teardown, and the ring is reset whole at recycle.
+            if (conn != null) {
+                closeFromRecv(conn, fd)
+            }
+
+            return
+        }
+
+        // A stale CQE from the fd's previous tenant: its ring is already gone.
+        val ring = conn?.ring ?: return
+
+        val bid = flags ushr IoUring.CQE_BUFFER_SHIFT
+        val address = ring.received(bid, res, kernelMore = flags and IoUring.CQE_F_BUF_MORE != 0)
+        if (!conn.complete(res, bid, address)) {
+            closeFromRecvOverflow(conn, fd, gen)
+            return
+        }
+
+        if (flags and IoUring.CQE_F_MORE == 0) {
+            submitRecv(fd, gen, ring.bgid)
         }
     }
 
@@ -291,12 +442,16 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
         for (packed in recvStarved) {
             val fd = packed.toInt()
             val gen = (packed ushr 32).toInt()
-            if (connAt(fd, gen) != null) {
-                submitRecv(fd, gen)
+            val conn = connAt(fd, gen)
+            if (conn != null) {
+                submitRecv(fd, gen, conn.ring?.bgid ?: BGID)
             }
         }
         recvStarved.clear()
     }
+
+    /** Connections whose recv is parked on -ENOBUFS, waiting for a buffer. Reactor thread. */
+    internal val starvedRecvs: Int get() = recvStarved.size
 
     // Recv-side teardown. With a send in the kernel the reactor keeps its ref and the table slot, so the slab
     // cannot be recycled under it; finishSend lets go.
@@ -372,6 +527,15 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
         conn.drainRecv(scratchItem)
 
         Native.close(fd)
+
+        // Its own ring, in incremental mode: unregistered now, its gid free for the next accept. The cancel above
+        // goes in with the next enter, ahead of any task work there that could still select from the ring.
+        val ring = conn.ring
+        if (ring != null) {
+            freeGids[freeGidCount++] = ring.bgid
+            ring.unregister()
+        }
+
         conn.clear()
 
         if (pool.size < options.poolMax) {

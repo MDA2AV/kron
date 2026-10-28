@@ -127,27 +127,49 @@ class TcpConnection internal constructor(
     /** Hands [item]'s buffer back to the reactor, which offers it to the kernel again. */
     fun returnBuffer(item: RecvItem) {
         if (item.hasBuffer) {
-            tcp.returnBuffer(item.bufferId)
+            tcp.returnBuffer(this, item.bufferId, item.generation)
         }
     }
 
-    internal fun returnBuffer(bufferId: Int) = tcp.returnBuffer(bufferId)
+    // A buffer an adapter took out of the queue in this life.
+    internal fun returnBuffer(bufferId: Int) = tcp.returnBuffer(this, bufferId, generation)
 
-    private fun snapshotNow(): RecvSnapshot = snapshot.set(recv.snapshotTail(), closed)
+    /** This connection's own buffer ring in incremental mode, see [ServerConfig.incremental]; null on a shared ring. */
+    internal var ring: ConnectionRing? = null
+
+    // The queue's tail when the last snapshot was taken: no reader can see an item from there on yet.
+    private var visibleTail = 0L
+
+    private fun snapshotNow(): RecvSnapshot {
+        visibleTail = recv.snapshotTail()
+        return snapshot.set(visibleTail, closed)
+    }
 
     // The reactor's recv path. False on recv-queue overflow; the reactor then tears the connection down.
     internal fun complete(length: Int, bufferId: Int, address: Long): Boolean {
+        val ring = ring
+
+        // Incremental mode: a slice continuing the last one queued, which no snapshot has shown a reader yet, grows it
+        // instead of taking an entry of its own. While nobody reads, the queue then needs no more entries than the
+        // ring has buffers, however small the peer's sends.
+        if (ring != null && recv.tryExtendLast(address, length, bufferId, generation, visibleTail)) {
+            signalRead()
+            return true
+        }
+
         if (!recv.tryEnqueue(address, length, bufferId, generation)) {
             printErr("[conn] recv queue overflow; closing connection.")
             overflowed = true
 
-            if (bufferId >= 0) {
+            // A shared buffer goes back now; a connection's own ring is reset whole at recycle.
+            if (bufferId >= 0 && ring == null) {
                 tcp.returnBufferDirect(bufferId)
             }
 
             return false
         }
 
+        ring?.sliceOut(bufferId)
         signalRead()
         return true
     }
@@ -173,10 +195,10 @@ class TcpConnection internal constructor(
         releaseParkedFlush()
     }
 
-    // Recycle: hands back the buffers still queued.
+    // Recycle: hands back the buffers still queued - shared ones; a connection's own ring is reset whole.
     internal fun drainRecv(scratch: RecvItem) {
         while (recv.tryDequeue(scratch)) {
-            if (scratch.hasBuffer) {
+            if (scratch.hasBuffer && ring == null) {
                 tcp.returnBufferDirect(scratch.bufferId)
             }
         }
@@ -564,6 +586,7 @@ class TcpConnection internal constructor(
         }
 
         recv.reset()
+        visibleTail = 0
         bufferHolder = null
         handlerRefReleased = false
         listenerPort = 0
@@ -575,6 +598,9 @@ class TcpConnection internal constructor(
             Native.free(writeBuffer)
             writeBuffer = 0L
         }
+
+        ring?.close()
+        ring = null
     }
 
     private companion object {
