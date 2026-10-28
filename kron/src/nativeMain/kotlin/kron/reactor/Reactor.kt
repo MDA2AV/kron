@@ -194,6 +194,7 @@ class Reactor(val id: Int, private val config: ServerConfig) {
             ring.cqAdvance(ready)
 
             runDueTickers()
+            runDueTimers()
         }
     }
 
@@ -211,10 +212,24 @@ class Reactor(val id: Int, private val config: ServerConfig) {
         }
     }
 
-    // The wait, bounded by the next ticker run - read off a fresh clock, as nowMs predates this pass's work.
-    // +1: the ms clock can read just short of the deadline when the kernel's timer wakes us.
-    private fun waitForCompletions(): Int =
-        ring.submitAndWait(1, maxOf(0L, nextTickMs - Clock.monotonicMs()) + 1)
+    // The wait, bounded by the next ticker run or the earliest timer, whichever is sooner - read off a fresh clock,
+    // as nowMs predates this pass's work. +1: the ms clock can read just short of the deadline when the kernel's
+    // timer wakes us. One already due waits for nothing, but still enters for completions: under DEFER_TASKRUN
+    // they are only run by an enter that asks for them, and a timer due on every pass must not starve them.
+    private fun waitForCompletions(): Int {
+        var deadline = nextTickMs
+        val timer = timers.peek()
+        if (timer != null && timer.deadlineMs < deadline) {
+            deadline = timer.deadlineMs
+        }
+
+        val remainingMs = deadline - Clock.monotonicMs()
+        if (remainingMs <= 0) {
+            return ring.submitAndWait(1, 0)
+        }
+
+        return ring.submitAndWait(1, remainingMs + 1)
+    }
 
     /** The SQE to fill next; when the SQ is full, what is queued goes to the kernel first. Reactor thread. */
     internal fun getSqeOrFlush(): Long {
@@ -378,6 +393,69 @@ class Reactor(val id: Int, private val config: ServerConfig) {
         }
     }
 
+    // ---- Scheduled tasks --------------------------------------------------------------------------------
+
+    private val timers = TimerHeap()
+    private var timerSeq = 0L
+
+    /**
+     * Runs [task] on this reactor's thread once [delayMs] have passed: on the first pass of the loop after its
+     * deadline, at millisecond resolution. Callable from any thread; the returned handle cancels it.
+     *
+     * The timers live in the reactor, not in the ring: scheduling and cancelling one makes no syscall, and the
+     * loop's wait in the kernel ends at the earliest deadline. A reactor that stops drops the ones still pending.
+     */
+    fun schedule(delayMs: Long, task: () -> Unit): ScheduledTask {
+        val scheduled = ScheduledTask(this, Clock.monotonicMs() + maxOf(0L, delayMs), task)
+        if (onReactorThread) {
+            addTimer(scheduled)
+        } else {
+            post {
+                addTimer(scheduled)
+            }
+        }
+
+        return scheduled
+    }
+
+    /** Timers waiting to run. Reactor thread. */
+    internal val pendingTimers: Int get() = timers.size
+
+    private fun addTimer(scheduled: ScheduledTask) {
+        if (scheduled.cancelled) {
+            return
+        }
+
+        scheduled.seq = timerSeq++
+        timers.add(scheduled)
+    }
+
+    internal fun cancelTimer(scheduled: ScheduledTask) {
+        scheduled.cancelled = true
+        timers.remove(scheduled)
+    }
+
+    // The timers due by this pass's clock. One scheduled while they run waits for the next pass, even at no delay,
+    // so a task that keeps rescheduling itself cannot hold the loop.
+    private fun runDueTimers() {
+        val limit = timerSeq
+        while (true) {
+            val next = timers.peek() ?: return
+            if (next.deadlineMs > nowMs || next.seq >= limit) {
+                return
+            }
+
+            timers.remove(next)
+
+            // A task that throws must not unwind the loop and end the reactor.
+            try {
+                next.task()
+            } catch (e: Throwable) {
+                printErr("[r$id] scheduled task threw: ${e.stackTraceToString()}")
+            }
+        }
+    }
+
     // ---- Ring operations (timers) -----------------------------------------------------------------------
 
     // In-flight operations by slot; the CQE carries the slot. Reactor thread only.
@@ -472,6 +550,7 @@ class Reactor(val id: Int, private val config: ServerConfig) {
 
         tcp?.closeListeners()
         tcp?.closeAcceptedSockets()
+        timers.clear()
 
         // Taken away before it is closed, and its writers waited out.
         val fd = wakeFd.exchange(0)
