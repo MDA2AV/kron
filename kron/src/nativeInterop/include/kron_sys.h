@@ -17,7 +17,13 @@
 #include <sys/socket.h>
 #include <sys/syscall.h>
 
-/* The Kotlin/Native toolchain's kernel headers are 4.9's, older than these three (4.13, 5.1 and 5.16). */
+/*
+ * The io_uring ABI comes from the kernel's own headers, vendored unmodified: include/linux/io_uring.h and
+ * include/linux/io_uring/zcrx.h are Linux v7.3's include/uapi/linux/ (torvalds/linux.git at tag v7.3). The ABI only
+ * grows, so a newer copy compiles the same program; what kernel it runs on is decided by the features it uses.
+ *
+ * The Kotlin/Native toolchain's kernel headers are 4.9's, older than these three (4.13, 5.1 and 5.16).
+ */
 typedef int __kernel_rwf_t;
 struct __kernel_timespec {
     long long tv_sec;
@@ -27,7 +33,7 @@ struct __kernel_timespec {
 #define __DECLARE_FLEX_ARRAY(T, member) T member[0]
 #endif
 #define UAPI_LINUX_IO_URING_H_SKIP_LINUX_TIME_TYPES_H 1
-#include "kron/io_uring.h"
+#include <linux/io_uring.h>
 
 static inline long kr_syscall6(long number, long a, long b, long c, long d, long e, long f) {
     long rc = syscall(number, a, b, c, d, e, f);
