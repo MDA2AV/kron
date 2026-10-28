@@ -5,6 +5,7 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 
 /**
@@ -138,11 +139,17 @@ class TcpConnection internal constructor(
         return COROUTINE_SUSPENDED
     }
 
+    // A check that fails in the posted task goes back to the caller: the reactor survives a task that throws, so
+    // nothing else would ever resume it.
     private suspend fun readOffReactor(): RecvSnapshot = suspendCoroutine { cont ->
         tcp.reactor.post {
-            val result = readOrPark(cont)
-            if (result !== COROUTINE_SUSPENDED) {
-                cont.resume(result as RecvSnapshot)
+            try {
+                val result = readOrPark(cont)
+                if (result !== COROUTINE_SUSPENDED) {
+                    cont.resume(result as RecvSnapshot)
+                }
+            } catch (e: Throwable) {
+                cont.resumeWithException(e)
             }
         }
     }
@@ -370,10 +377,15 @@ class TcpConnection internal constructor(
         return COROUTINE_SUSPENDED
     }
 
+    // As readOffReactor: a failed check is the caller's exception, not a hang.
     private suspend fun flushOffReactor(): Unit = suspendCoroutine { cont ->
         tcp.reactor.post {
-            if (flushOrPark(cont) !== COROUTINE_SUSPENDED) {
-                cont.resume(Unit)
+            try {
+                if (flushOrPark(cont) !== COROUTINE_SUSPENDED) {
+                    cont.resume(Unit)
+                }
+            } catch (e: Throwable) {
+                cont.resumeWithException(e)
             }
         }
     }
