@@ -12,6 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/eventfd.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -68,6 +70,43 @@ static inline int kr_listen(int fd, int backlog) {
 
 static inline int kr_getsockname(int fd, long address, long lengthAddress) {
     return getsockname(fd, (struct sockaddr *)address, (socklen_t *)lengthAddress) < 0 ? -errno : 0;
+}
+
+/*
+ * One end of a connected socket - the peer's (getpeername) or its own (getsockname): the IP address as text at host
+ * (hostLength bytes, INET6_ADDRSTRLEN is enough for either family) and the port as an int at port. 0, or a negative
+ * errno: ENOTCONN once the peer is gone.
+ */
+static inline int kr_socket_address(int fd, int peer, long host, int hostLength, long port) {
+    struct sockaddr_storage address;
+    socklen_t length = sizeof address;
+
+    int rc = peer ? getpeername(fd, (struct sockaddr *)&address, &length)
+                  : getsockname(fd, (struct sockaddr *)&address, &length);
+    if (rc < 0) {
+        return -errno;
+    }
+
+    const void *bytes;
+    in_port_t networkPort;
+    if (address.ss_family == AF_INET) {
+        struct sockaddr_in *v4 = (struct sockaddr_in *)&address;
+        bytes = &v4->sin_addr;
+        networkPort = v4->sin_port;
+    } else if (address.ss_family == AF_INET6) {
+        struct sockaddr_in6 *v6 = (struct sockaddr_in6 *)&address;
+        bytes = &v6->sin6_addr;
+        networkPort = v6->sin6_port;
+    } else {
+        return -EAFNOSUPPORT;
+    }
+
+    if (inet_ntop(address.ss_family, bytes, (char *)host, (socklen_t)hostLength) == NULL) {
+        return -errno;
+    }
+
+    *(int *)port = ntohs(networkPort);
+    return 0;
 }
 
 static inline int kr_eventfd(int initval, int flags) {

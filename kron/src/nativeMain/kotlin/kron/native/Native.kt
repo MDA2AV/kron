@@ -19,6 +19,7 @@ import kron.sys.kr_send
 import kron.sys.kr_sendmsg
 import kron.sys.kr_setsockopt
 import kron.sys.kr_shutdown
+import kron.sys.kr_socket_address
 import kron.sys.kr_socket
 import kron.sys.kr_syscall6
 import kron.sys.kr_write
@@ -66,6 +67,9 @@ internal object Native {
     fun listen(fd: Int, backlog: Int): Int = kr_listen(fd, backlog)
 
     fun getsockname(fd: Int, addr: Long, lengthAddr: Long): Int = kr_getsockname(fd, addr, lengthAddr)
+
+    fun socketAddress(fd: Int, peer: Boolean, host: Long, hostLength: Int, port: Long): Int =
+        kr_socket_address(fd, if (peer) 1 else 0, host, hostLength, port)
 
     fun shutdown(fd: Int, how: Int): Int = kr_shutdown(fd, how)
 
