@@ -3,7 +3,6 @@ package ominous
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.AtomicReference
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import kotlin.coroutines.resume
@@ -14,7 +13,6 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /** A connection's life end to end, against a real reactor over loopback. */
-@OptIn(ExperimentalAtomicApi::class)
 class TcpConnectionTest {
     private fun pattern(size: Int, seed: Int = 0) = ByteArray(size) { ((it * 31 + seed) and 0xFF).toByte() }
 

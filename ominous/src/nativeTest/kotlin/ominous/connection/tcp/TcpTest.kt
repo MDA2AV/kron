@@ -1,12 +1,10 @@
 package ominous
 
 import kotlin.concurrent.atomics.AtomicIntArray
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-@OptIn(ExperimentalAtomicApi::class)
 class TcpTest {
     // Connection A is recycled with its multishot recv still armed: its send fails after its own FIN, which wakes
     // nothing on the read side, so the recv's cancel is only queued when its fd is closed. The reactor is held

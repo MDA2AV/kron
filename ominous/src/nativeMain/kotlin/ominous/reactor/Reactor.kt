@@ -2,7 +2,6 @@ package ominous
 
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicInt
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
@@ -18,7 +17,6 @@ import kotlin.coroutines.startCoroutine
  * on the thread meant to be the reactor's (the ring must be created, entered and closed there); [stop] from
  * anywhere.
  */
-@OptIn(ExperimentalAtomicApi::class)
 class Reactor(val id: Int, private val config: ServerConfig) {
     /** Runs on the reactor thread before the first accept is armed, listeners bound. */
     var onStart: ((Reactor) -> Unit)? = null

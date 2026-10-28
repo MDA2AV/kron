@@ -15,6 +15,7 @@ kotlin {
             languageSettings {
                 optIn("kotlinx.cinterop.ExperimentalForeignApi")
                 optIn("kotlin.experimental.ExperimentalNativeApi")
+                optIn("kotlin.concurrent.atomics.ExperimentalAtomicApi")
             }
         }
         commonTest.dependencies {

@@ -1,13 +1,11 @@
 package ominous
 
 import kotlin.concurrent.atomics.AtomicReference
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
  * Unbounded multi-producer, single-consumer queue (Vyukov's intrusive list): what [Reactor.post] hands tasks
  * through, in place of the JVM's ConcurrentLinkedQueue. A node per item; posts are off the hot path.
  */
-@OptIn(ExperimentalAtomicApi::class)
 internal class MpscQueue<T : Any> {
     private class Node<T>(var value: T?) {
         val next = AtomicReference<Node<T>?>(null)

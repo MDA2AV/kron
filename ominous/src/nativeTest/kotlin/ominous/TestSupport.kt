@@ -33,14 +33,12 @@ import platform.posix.socket
 import platform.posix.timeval
 import platform.posix.usleep
 import kotlin.concurrent.atomics.AtomicInt
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import ominous.sys.om_thread_join
 import ominous.sys.om_thread_start
 
 // What the JVM tests took from java.util.concurrent and java.net.Socket.
 
 /** A count-down latch, polled: the waits in these tests are short. */
-@OptIn(ExperimentalAtomicApi::class)
 class Latch(count: Int) {
     private val remaining = AtomicInt(count)
 

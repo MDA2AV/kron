@@ -2,13 +2,11 @@ package ominous
 
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.AtomicLongArray
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
  * Bounded multi-producer, single-consumer queue of non-negative longs (Vyukov): other threads hand the
  * reactor packed values - buffer ids - without allocating per item.
  */
-@OptIn(ExperimentalAtomicApi::class)
 internal class MpscLongQueue(capacity: Int) {
     init {
         require(capacity > 0 && capacity and (capacity - 1) == 0) { "capacity must be a power of two" }
