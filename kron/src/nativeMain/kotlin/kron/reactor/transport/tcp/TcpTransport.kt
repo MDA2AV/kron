@@ -40,9 +40,39 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
         }
     }
 
+    // Teardown's: a reactor that stopped accepting has closed them already, and their numbers may be connections'
+    // by now.
     fun closeListeners() {
+        if (!accepting) {
+            return
+        }
+
         for (fd in listenFds) {
             if (fd >= 0) {
+                Native.close(fd)
+            }
+        }
+    }
+
+    // False once stopAccepting ran: no accept is re-armed, and the listeners are closed.
+    private var accepting = true
+
+    /**
+     * Closes the listeners for good, the connections already accepted untouched. Each multishot accept is
+     * cancelled, not only its descriptor closed: the armed request holds the socket open, and would go on
+     * accepting. A connection the kernel accepted before the cancel landed is still served.
+     */
+    fun stopAccepting() {
+        if (!accepting) {
+            return
+        }
+
+        accepting = false
+        acceptPaused.clear()
+
+        for (fd in listenFds) {
+            if (fd >= 0) {
+                submitCancel(tag(KIND_TCP_ACCEPT, 0, fd))
                 Native.close(fd)
             }
         }
@@ -120,6 +150,10 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
     // Every connection life on this reactor takes the next value, so two lives never share a generation (#416).
     private var generations = 0
 
+    // Accepted and not yet recycled: a connection whose handler outlives its table slot still counts.
+    internal var openConnections = 0
+        private set
+
     fun nextGeneration(): Int = ++generations
 
     fun connAt(fd: Int, gen: Int): TcpConnection? {
@@ -194,6 +228,7 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
                 ?: TcpConnection(this, res, options.writeSlabSize, options.recvQueueEntries)
 
             track(res, conn)
+            openConnections++
             conn.initRefs()
             conn.listenerPort = portOf(listenFd)
             conn.sendFlags = sendOpFlags
@@ -201,6 +236,9 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
 
             // Inline, until its first suspension: the recv above is not submitted yet, so its first read parks.
             reactor.startHandler(conn)
+        } else if (!accepting) {
+            // The cancel, or the closed listener's end: expected, and not re-armed.
+            return
         } else if (res == -Native.EMFILE || res == -Native.ENFILE || res == -Native.ENOBUFS || res == -Native.ENOMEM) {
             // The connection stays in the backlog, so an accept re-armed now fails again at once and spins the
             // reactor; once a tick instead, reported once until an accept succeeds.
@@ -220,7 +258,7 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
             printErr("[r${reactor.id}] accept error: $res")
         }
 
-        if (!more) {
+        if (!more && accepting) {
             submitAccept(listenFd)
         }
     }
@@ -373,6 +411,7 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
 
         Native.close(fd)
         conn.clear()
+        openConnections--
 
         if (pool.size < options.poolMax) {
             pool.addLast(conn)
