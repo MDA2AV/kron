@@ -421,4 +421,57 @@ class TcpConnectionTest {
             }
         }
     }
+
+    @Test
+    fun `a connection knows both its ends`() {
+        val ends = AtomicReference<Pair<SocketAddress?, SocketAddress?>?>(null)
+
+        val handler: suspend (TcpConnection) -> Unit = { conn ->
+            ends.store(conn.remoteAddress to conn.localAddress)
+            echo(conn)
+        }
+
+        TestServer(testConfig(), handler).use { server ->
+            server.connect().use { client ->
+                client.write("hi")
+                client.readBytes(2)
+
+                val expected = SocketAddress("127.0.0.1", Sockets.localPort(client.fd)) to
+                    SocketAddress("127.0.0.1", server.port)
+                assertEquals(expected, ends.load())
+            }
+        }
+    }
+
+    @Test
+    fun `a recycled connection reports its new peer and not the last one's`() {
+        // One reactor: the handlers run one after another on its thread, so the lists need no more than this.
+        val connections = AtomicReference<List<TcpConnection>>(emptyList())
+        val peers = AtomicReference<List<SocketAddress?>>(emptyList())
+
+        val handler: suspend (TcpConnection) -> Unit = { conn ->
+            connections.store(connections.load() + conn)
+            peers.store(peers.load() + conn.remoteAddress)
+            echo(conn)
+        }
+
+        val clientPorts = mutableListOf<Int>()
+        TestServer(testConfig(), handler).use { server ->
+            repeat(2) {
+                server.connect().use { client ->
+                    client.write("hi")
+                    client.readBytes(2)
+                    clientPorts += Sockets.localPort(client.fd)
+                }
+
+                // Time for the reactor to see the close and put the connection back in its pool.
+                sleepMs(100)
+            }
+        }
+
+        val served = connections.load()
+        assertEquals(2, served.size)
+        assertTrue(served[0] === served[1], "the second client was not served by the recycled connection")
+        assertEquals(clientPorts.map { SocketAddress("127.0.0.1", it) }, peers.load())
+    }
 }

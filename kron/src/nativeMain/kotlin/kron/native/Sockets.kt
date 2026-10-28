@@ -1,5 +1,9 @@
 package kron
 
+import kotlinx.cinterop.ByteVar
+import kotlinx.cinterop.toCPointer
+import kotlinx.cinterop.toKString
+
 /** The socket calls made outside the ring: listeners, options, and the bound port. */
 internal object Sockets {
     const val AF_INET = 2
@@ -72,6 +76,25 @@ internal object Sockets {
             Native.free(addr)
         }
     }
+
+    /** One end of a connected socket, the peer's or its own; null once it has none, a peer that is gone. */
+    fun address(fd: Int, peer: Boolean): SocketAddress? {
+        val buffer = Native.malloc(ADDRESS_TEXT_SIZE + 4L)
+        try {
+            val rc = Native.socketAddress(fd, peer, buffer, ADDRESS_TEXT_SIZE, buffer + ADDRESS_TEXT_SIZE)
+            if (rc < 0) {
+                return null
+            }
+
+            val host = buffer.toCPointer<ByteVar>()!!.toKString()
+            return SocketAddress(host, getInt(buffer + ADDRESS_TEXT_SIZE))
+        } finally {
+            Native.free(buffer)
+        }
+    }
+
+    // INET6_ADDRSTRLEN: room for the longest address inet_ntop writes, in either family.
+    private const val ADDRESS_TEXT_SIZE = 46
 
     /** The port a socket is bound to. */
     fun localPort(fd: Int): Int {

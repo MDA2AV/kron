@@ -38,6 +38,39 @@ class TcpConnection internal constructor(
     var listenerPort: Int = 0
         internal set
 
+    /**
+     * The peer's address. Read from the socket the first time it is asked for, then kept for this connection's
+     * life; null if the peer is already gone by then.
+     */
+    val remoteAddress: SocketAddress?
+        get() {
+            val known = remote
+            if (known != null) {
+                return known
+            }
+
+            return Sockets.address(clientFd, peer = true).also {
+                remote = it
+            }
+        }
+
+    /** This end's address: the local IP the peer reached and the listener's port. Read once, like [remoteAddress]. */
+    val localAddress: SocketAddress?
+        get() {
+            val known = local
+            if (known != null) {
+                return known
+            }
+
+            return Sockets.address(clientFd, peer = false).also {
+                local = it
+            }
+        }
+
+    // The two ends, once read; a recycled connection forgets them.
+    private var remote: SocketAddress? = null
+    private var local: SocketAddress? = null
+
     // A new value per life from the reactor; the low 16 bits ride in every user_data, so a CQE from any other
     // life is told apart, this object's or another's (#416).
     internal var generation = tcp.nextGeneration()
@@ -567,6 +600,8 @@ class TcpConnection internal constructor(
         bufferHolder = null
         handlerRefReleased = false
         listenerPort = 0
+        remote = null
+        local = null
     }
 
     // Pool overflow and reactor teardown: frees the native memory.
