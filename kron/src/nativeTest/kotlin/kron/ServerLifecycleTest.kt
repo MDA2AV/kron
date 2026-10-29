@@ -301,6 +301,14 @@ class ServerLifecycleTest {
     }
 
     @Test
+    fun `a handler closing the server with a grace period while another thread is in join does not hold its reactor`() {
+        // The reactor cannot drain while its handler waits, so waiting out the grace period would only stall it.
+        val took = joinWhileHandlerCloses { it.close(5_000) }
+        assertTrue(took >= 0, "join never returned after a handler closed the server")
+        assertTrue(took < 2_000, "join returned after $took ms: the handler held its reactor for the grace period")
+    }
+
+    @Test
     fun `close with a grace period after close is harmless`() {
         val server = start()
         assertServes(server.port)
