@@ -19,12 +19,15 @@ import platform.posix.listen
 import platform.posix.setsockopt
 import platform.posix.sockaddr_in
 import platform.posix.socket
-import kotlin.test.Ignore
+import kotlin.concurrent.atomics.AtomicInt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** [KronServer]'s own lifecycle: close, join and close(gracePeriodMs) after a close, and the port given back. */
+/**
+ * [KronServer]'s own lifecycle: close, join and close(gracePeriodMs) after a close, racing a join or from a handler,
+ * and the port given back.
+ */
 class ServerLifecycleTest {
     // One reactor echoing on a port the kernel picks, started.
     private fun start(): KronServer {
@@ -158,9 +161,6 @@ class ServerLifecycleTest {
         }
     }
 
-    // Ignored until kron issue 9: join empties each thread's slot before it waits on it, so a close() racing it has
-    // nothing to wait for.
-    @Ignore
     @Test
     fun `close waits for the teardown while another thread is blocked in join`() {
         // Ten rounds: close() returned with the reactor still listening in 27 of 30 rounds when measured.
@@ -181,6 +181,123 @@ class ServerLifecycleTest {
                 threads.joinAll()
             }
         }
+    }
+
+    @Test
+    fun `a second thread in join waits for the teardown too`() {
+        val server = start()
+        val port = server.port
+        assertServes(port)
+
+        // Each join checks, as it returns, that the reactor is gone.
+        val threads = TestThreads()
+        val joined = Latch(2)
+        val listening = AtomicInt(0)
+        repeat(2) {
+            threads.start {
+                server.join()
+                if (!refused(port)) {
+                    listening.addAndFetch(1)
+                }
+                joined.countDown()
+            }
+        }
+
+        try {
+            sleepMs(50)
+            assertEquals(2, joined.count, "a join returned while the server was running")
+
+            server.close()
+            assertTrue(joined.await(5_000), "a join never returned after close")
+            assertEquals(0, listening.load(), "a join returned with the reactor still listening")
+        } finally {
+            server.close()
+            threads.joinAll()
+        }
+    }
+
+    @Test
+    fun `close with a grace period waits out an open connection while another thread is blocked in join`() {
+        val server = start()
+        val threads = TestThreads()
+        val joined = Latch(1)
+        threads.start {
+            server.join()
+            joined.countDown()
+        }
+
+        // The open connection keeps the reactor draining, so close can return only once the grace period runs out.
+        TestSocket().use { client ->
+            client.setReceiveTimeout(5_000)
+            client.connect(server.port)
+            client.write("hi")
+            assertEquals("hi", client.readBytes(2).decodeToString())
+
+            try {
+                sleepMs(20)
+                val took = millisTaken {
+                    server.close(300)
+                }
+                assertTrue(took >= 250, "close(300) returned after $took ms, with a connection still open")
+                assertTrue(joined.await(5_000), "join never returned after close")
+            } finally {
+                server.close()
+                threads.joinAll()
+            }
+        }
+    }
+
+    // A server whose handler calls [close] on it, with another thread blocked in join, and a connection to run it: the
+    // milliseconds from the connect until that join returned, or -1 if it did not within 10 s. After a deadlock nothing
+    // is cleaned up, as a close or a join here would hang the run with it.
+    private fun joinWhileHandlerCloses(close: (KronServer) -> Unit): Long {
+        val ready = Latch(1)
+        val holder = arrayOfNulls<KronServer>(1)
+        val server = KronServer(
+            testConfig(),
+            onStart = {
+                ready.countDown()
+            },
+            handler = {
+                close(holder[0]!!)
+            },
+        ).start()
+        holder[0] = server
+
+        if (!ready.await(10_000)) {
+            server.close()
+            error("the reactor never started")
+        }
+
+        val port = server.port
+        val threads = TestThreads()
+        val joined = Latch(1)
+        threads.start {
+            server.join()
+            joined.countDown()
+        }
+
+        sleepMs(20)
+        val start = Clock.monotonicMs()
+        TestSocket().use { client ->
+            client.connect(port)
+        }
+
+        if (!joined.await(10_000)) {
+            return -1
+        }
+
+        val took = Clock.monotonicMs() - start
+        threads.joinAll()
+        assertTrue(refused(port), "the port still takes connections after the handler's close")
+        return took
+    }
+
+    @Test
+    fun `a handler closing the server while another thread is blocked in join does not deadlock`() {
+        // On the reactor thread close can only stop the reactors: their teardown comes after the handler returns.
+        val took = joinWhileHandlerCloses { it.close() }
+        assertTrue(took >= 0, "join never returned after a handler closed the server")
     }
 
     @Test
