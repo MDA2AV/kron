@@ -158,7 +158,8 @@ class ServerLifecycleTest {
         }
     }
 
-    // KronServer.join empties each thread's slot before it waits on it, so a close() racing it has nothing to wait for.
+    // Ignored until kron issue 9: join empties each thread's slot before it waits on it, so a close() racing it has
+    // nothing to wait for.
     @Ignore
     @Test
     fun `close waits for the teardown while another thread is blocked in join`() {
