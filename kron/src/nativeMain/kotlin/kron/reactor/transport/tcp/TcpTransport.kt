@@ -49,6 +49,9 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
 
         for (fd in listenFds) {
             if (fd >= 0) {
+                // Shut down first: the armed accept holds the socket, which the ring's async teardown frees ~50 ms
+                // after close() has returned - listening, and holding the port, until then.
+                Native.shutdown(fd, Sockets.SHUT_RDWR)
                 Native.close(fd)
             }
         }

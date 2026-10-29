@@ -343,6 +343,8 @@ class TlsService private constructor(
                 require(protocol.all { it.code < 128 }) { "ALPN protocol '$protocol' must be ASCII." }
                 total += 1 + protocol.length
             }
+            // The u16 total would cut a longer list short, and its later names would never be chosen.
+            require(total <= 0xFFFF) { "The ALPN protocols take $total bytes; at most 65535 fit." }
 
             val wire = Native.malloc(2L + total)
             putShort(wire, total.toShort())

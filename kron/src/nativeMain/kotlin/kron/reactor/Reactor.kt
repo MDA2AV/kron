@@ -305,8 +305,8 @@ class Reactor(val id: Int, private val config: ServerConfig) {
     private val wakeFd = AtomicInt(0)
 
     // 1 from a handoff's eventfd write until the loop's next pass clears it: the handoffs in between share
-    // that one write.
-    private val wakePending = AtomicInt(0)
+    // that one write. Internal, with the pass's two halves below, so a test can race a post against them.
+    internal val wakePending = AtomicInt(0)
 
     // Writers holding the eventfd's number, so teardown can wait them out before it closes it: a writer
     // that read the old number would otherwise put 8 bytes into whatever socket took it next.
@@ -351,7 +351,7 @@ class Reactor(val id: Int, private val config: ServerConfig) {
 
     // First in each pass, so a handoff landing during the drains still wakes the next one. An exchange, not a
     // store: otherwise a queue can read empty before the clear is visible.
-    private fun clearWakePending() {
+    internal fun clearWakePending() {
         wakePending.exchange(0)
     }
 
@@ -378,7 +378,7 @@ class Reactor(val id: Int, private val config: ServerConfig) {
         }
     }
 
-    private fun drainPostQ() {
+    internal fun drainPostQ() {
         while (true) {
             val task = postQ.poll() ?: return
 
