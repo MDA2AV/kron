@@ -76,6 +76,8 @@ internal class TcpTransport(val reactor: Reactor, private val config: ServerConf
         for (fd in listenFds) {
             if (fd >= 0) {
                 submitCancel(tag(KIND_TCP_ACCEPT, 0, fd))
+                // Shut down too: the cancel leaves with the next enter, which a reactor stopping now never makes.
+                Native.shutdown(fd, Sockets.SHUT_RDWR)
                 Native.close(fd)
             }
         }
