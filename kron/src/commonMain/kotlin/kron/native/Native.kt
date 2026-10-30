@@ -69,7 +69,7 @@ internal object Native {
     fun malloc(size: Long): Long {
         val p = Sys.malloc(size)
         if (p == 0L) {
-            throw OutOfMemoryError("malloc($size)")
+            throw outOfMemory("malloc($size)")
         }
 
         return p
@@ -80,7 +80,7 @@ internal object Native {
         val rounded = (size + alignment - 1) / alignment * alignment
         val p = Sys.alignedAlloc(alignment, rounded)
         if (p == 0L) {
-            throw OutOfMemoryError("aligned_alloc($alignment, $size)")
+            throw outOfMemory("aligned_alloc($alignment, $size)")
         }
 
         return p

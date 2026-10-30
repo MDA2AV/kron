@@ -49,3 +49,5 @@ internal actual fun readFileBytes(path: String): ByteArray? =
     } catch (_: Exception) {
         null
     }
+
+internal actual fun outOfMemory(message: String): Throwable = OutOfMemoryError(message)

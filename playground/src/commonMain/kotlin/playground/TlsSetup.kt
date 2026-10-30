@@ -1,7 +1,6 @@
 package playground
 
 import kron.tls.TlsOptions
-import kotlin.system.exitProcess
 
 /**
  * The TLS samples' shared settings: PLAYGROUND_TLS_CERT and PLAYGROUND_TLS_KEY name a PEM certificate and key, and
@@ -15,7 +14,7 @@ object TlsSetup {
         val keyPath = Env.string("PLAYGROUND_TLS_KEY")
         if ((certPath == null) != (keyPath == null)) {
             log("[$sample] set both PLAYGROUND_TLS_CERT and PLAYGROUND_TLS_KEY, or neither for a self-signed certificate")
-            exitProcess(2)
+            exit(2)
         }
 
         val kernelTx = Env.bool("PLAYGROUND_KTLS_TX", false)

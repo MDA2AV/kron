@@ -31,6 +31,9 @@ object Env {
 /** One line to stderr. */
 expect fun log(message: String)
 
+/** Ends the process with [code]. */
+expect fun exit(code: Int): Nothing
+
 internal expect fun environment(name: String): String?
 
 // The CPUs online, as sysconf counts them: not narrowed by the process's affinity on either platform.

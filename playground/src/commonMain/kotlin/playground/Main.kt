@@ -1,6 +1,5 @@
 package playground
 
-import kotlin.system.exitProcess
 
 /** Runs the sample named by the first argument (default `tcp-raw`). */
 fun main(args: Array<String>) {
@@ -14,7 +13,7 @@ fun main(args: Array<String>) {
         "tls-pipe" -> TlsPipe.run()
         else -> {
             log("unknown sample '$sample'; known: tcp-raw, tcp-pipe, tcp-count, tcp-incremental, tcp-upload, tls-raw, tls-pipe")
-            exitProcess(2)
+            exit(2)
         }
     }
 }

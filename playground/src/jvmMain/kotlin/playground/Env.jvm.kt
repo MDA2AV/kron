@@ -17,3 +17,5 @@ internal actual fun onlineProcessors(): Int {
     val sysconf = linker.downcallHandle(linker.defaultLookup().find("sysconf").orElseThrow(), FunctionDescriptor.of(JAVA_LONG, JAVA_INT))
     return (sysconf.invokeExact(84) as Long).toInt()
 }
+
+actual fun exit(code: Int): Nothing = kotlin.system.exitProcess(code)

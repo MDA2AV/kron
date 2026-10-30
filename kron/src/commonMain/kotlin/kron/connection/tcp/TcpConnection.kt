@@ -340,7 +340,7 @@ class TcpConnection internal constructor(
         do {
             // Doubled past Int.MAX_VALUE the size wraps, to 0 at worst, and this loop would spin forever.
             if (newSize > Int.MAX_VALUE / 2) {
-                throw OutOfMemoryError(
+                throw outOfMemory(
                     "The write slab cannot grow past $newSize bytes to hold $required; flush before writing more.",
                 )
             }

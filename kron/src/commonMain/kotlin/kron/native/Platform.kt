@@ -23,6 +23,9 @@ internal expect fun kernelRelease(): String
 /** The whole file at [path], or null when it cannot be opened or read. */
 internal expect fun readFileBytes(path: String): ByteArray?
 
+/** The platform's OutOfMemoryError, which common Kotlin does not have. */
+internal expect fun outOfMemory(message: String): Throwable
+
 internal fun checkIndex(index: Int, length: Int) {
     if (index < 0 || index >= length) {
         throw IndexOutOfBoundsException("Index $index out of bounds for length $length")

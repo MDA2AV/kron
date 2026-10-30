@@ -14,3 +14,5 @@ actual fun log(message: String) {
 internal actual fun environment(name: String): String? = getenv(name)?.toKString()
 
 internal actual fun onlineProcessors(): Int = sysconf(_SC_NPROCESSORS_ONLN).toInt()
+
+actual fun exit(code: Int): Nothing = kotlin.system.exitProcess(code)
