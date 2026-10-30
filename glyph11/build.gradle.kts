@@ -1,5 +1,6 @@
 plugins {
     kotlin("multiplatform")
+    `maven-publish`
 }
 
 // Glyph11, the hardened HTTP/1.1 parser: Ktron's JVM port (github.com/MDA2AV/Ktron, glyph11/), its array-and-offsets
