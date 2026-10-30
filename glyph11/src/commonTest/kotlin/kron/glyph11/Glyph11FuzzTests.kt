@@ -1,8 +1,5 @@
 package kron.glyph11
 
-import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.toKString
-import platform.posix.getenv
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertTrue
@@ -22,8 +19,7 @@ class Glyph11FuzzTests {
     private val iterations = env("GLYPH11_FUZZ_ITERATIONS")?.toInt() ?: 200_000
     private val seed = env("GLYPH11_FUZZ_SEED")?.toLong() ?: 0x6c79_7068_3131L
 
-    @OptIn(ExperimentalForeignApi::class)
-    private fun env(name: String): String? = getenv(name)?.toKString()
+    private fun env(name: String): String? = environment(name)
 
     private fun MutableMap<String, Int>.tally(kind: String) = set(kind, (this[kind] ?: 0) + 1)
 
@@ -312,3 +308,5 @@ class ChunkedFuzz(rnd: Random) : Fuzz(rnd) {
         return place(bytes, ParserLimits.Default)
     }
 }
+
+internal expect fun environment(name: String): String?

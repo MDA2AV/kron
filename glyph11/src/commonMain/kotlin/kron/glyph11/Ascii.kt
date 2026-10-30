@@ -1,7 +1,5 @@
 package kron.glyph11
 
-import kotlin.native.getLongAt
-
 /** Character classes and word-at-a-time scans over a request's bytes. */
 internal object Ascii {
     const val CR: Int = 0x0D
@@ -50,12 +48,13 @@ internal object Ascii {
 
     // ---- words: eight bytes, little endian, the byte at the lowest index in the low bits ----
     //
-    // getLongAt reads in the target's byte order, little endian on both of kron's (x64 and arm64). The helpers the
-    // fast path calls are inline functions, copied into it by kotlinc.
+    // wordAt reads little endian on every target: getLongAt in the target's byte order natively (little endian on both
+    // of kron's, x64 and arm64), a little-endian view on the JVM. The helpers the fast path calls are inline functions,
+    // copied into it by kotlinc.
 
     /** The eight bytes at [at]; `at + 8 <= a.size`. */
     @Suppress("NOTHING_TO_INLINE")
-    inline fun word(a: ByteArray, at: Int): Long = a.getLongAt(at)
+    inline fun word(a: ByteArray, at: Int): Long = wordAt(a, at)
 
     internal const val ONES: Long = 0x0101010101010101L
     internal const val HIGHS: Long = -0x7f7f7f7f7f7f7f80L // 0x8080808080808080
@@ -163,3 +162,6 @@ internal object Ascii {
 
     fun isOws(b: Int): Boolean = b == SP || b == HTAB
 }
+
+/** The eight bytes at [at] of [a] as a little-endian Long; `at + 8 <= a.size`. */
+internal expect fun wordAt(a: ByteArray, at: Int): Long
