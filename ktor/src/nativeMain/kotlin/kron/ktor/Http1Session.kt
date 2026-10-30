@@ -39,6 +39,9 @@ internal class Http1Session(private val conn: TcpConnection, private val engine:
     /** The connection ends after the current response: asked for, or its framing can no longer be trusted. */
     internal var mustClose = false
 
+    /** Upgraded: the protocol's own writer sends, at the same time as its reader waits, so a wait sends nothing. */
+    internal var duplex = false
+
     suspend fun run() {
         try {
             while (true) {
@@ -164,7 +167,7 @@ internal class Http1Session(private val conn: TcpConnection, private val engine:
      */
     internal suspend fun fill(): Boolean {
         while (!peerGone) {
-            if (conn.writtenBytes > 0 && !conn.isClosed) {
+            if (!duplex && conn.writtenBytes > 0 && !conn.isClosed) {
                 conn.flush()
             }
 

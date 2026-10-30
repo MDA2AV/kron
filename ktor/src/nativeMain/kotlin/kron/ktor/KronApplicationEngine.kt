@@ -10,7 +10,9 @@ import io.ktor.server.engine.ApplicationEngine
 import io.ktor.server.engine.ApplicationEngineFactory
 import io.ktor.server.engine.BaseApplicationEngine
 import io.ktor.server.engine.ConnectorType
+import io.ktor.server.engine.DefaultUncaughtExceptionHandler
 import io.ktor.server.engine.withPort
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kron.IncrementalOptions
@@ -102,6 +104,9 @@ class KronApplicationEngine(
         val job = SupervisorJob(parent[Job])
         rootJob = job
 
+        // A coroutine a call leaves failing is logged: uncaught, Kotlin/Native would end the process.
+        val uncaught = parent[CoroutineExceptionHandler] ?: DefaultUncaughtExceptionHandler(environment.log)
+
         // Each reactor reports in from its own thread: its ports once it listens, or why it could not start.
         val listening = AtomicInt(0)
         var boundPorts = IntArray(0)
@@ -116,7 +121,7 @@ class KronApplicationEngine(
         }
 
         for (reactor in server.reactors) {
-            reactor.handlerContext = parent + job + ReactorDispatcher(reactor)
+            reactor.handlerContext = parent + job + uncaught + ReactorDispatcher(reactor)
             reactor.onFault = { _, e -> fault.compareAndSet(null, e) }
         }
 

@@ -175,6 +175,7 @@ internal class KronApplicationResponse(
         session.writeHead(statusCode, names, values)
         session.flush()
         session.mustClose = true
+        session.duplex = true
 
         // The connection is the protocol's now: its bytes in and out, until the upgraded job ends.
         val input = RequestBody(session, chunked = false, remaining = 0, expectContinue = false, raw = true)

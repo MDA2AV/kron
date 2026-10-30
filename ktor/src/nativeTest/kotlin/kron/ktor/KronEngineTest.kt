@@ -16,6 +16,7 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.discard
 import io.ktor.utils.io.writeStringUtf8
+import kotlinx.coroutines.launch
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -50,6 +51,10 @@ class KronEngineTest {
             }
             get("/big") { call.respondBytes(ByteArray(BIG) { (it % 251).toByte() }) }
             get("/fail") { throw IllegalStateException("boom") }
+            get("/launch") {
+                call.launch { throw IllegalStateException("a coroutine the route left failing") }
+                call.respondText("launched")
+            }
             get("/status") { call.respondText("made", status = HttpStatusCode.Created) }
             head("/only-head") { call.respondText("not sent") }
         }
@@ -248,6 +253,15 @@ class KronEngineTest {
     fun `a route that throws is answered with 500`() = server.connect().use { client ->
         client.write("GET /fail HTTP/1.1\r\nHost: x\r\n\r\n")
         assertEquals(500, client.readResponse().status)
+        client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+        assertEquals("hello", client.readResponse().text)
+    }
+
+    @Test
+    fun `a coroutine a route launches that fails is logged and the server goes on`() = server.connect().use { client ->
+        client.write("GET /launch HTTP/1.1\r\nHost: x\r\n\r\n")
+        assertEquals("launched", client.readResponse().text)
+        platform.posix.usleep(50_000u)
         client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
         assertEquals("hello", client.readResponse().text)
     }

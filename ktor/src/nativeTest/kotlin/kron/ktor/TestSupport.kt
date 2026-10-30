@@ -148,6 +148,8 @@ class TestClient(port: Int) : AutoCloseable {
         }
     }
 
+    fun readBytes(count: Int): ByteArray = readExactly(count)
+
     private fun readExactly(count: Int): ByteArray {
         val out = ByteArray(count)
         var got = 0

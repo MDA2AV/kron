@@ -23,5 +23,8 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
         }
+        nativeTest.dependencies {
+            implementation("io.ktor:ktor-server-websockets:3.6.1")
+        }
     }
 }
