@@ -1,28 +1,5 @@
 package kron
 
-import kron.sys.kr_aligned_alloc
-import kron.sys.kr_allowed_cpus
-import kron.sys.kr_bind
-import kron.sys.kr_close
-import kron.sys.kr_eventfd
-import kron.sys.kr_free
-import kron.sys.kr_getsockname
-import kron.sys.kr_listen
-import kron.sys.kr_malloc
-import kron.sys.kr_mmap
-import kron.sys.kr_munmap
-import kron.sys.kr_pin_current_thread
-import kron.sys.kr_read
-import kron.sys.kr_recv
-import kron.sys.kr_recvmsg
-import kron.sys.kr_send
-import kron.sys.kr_sendmsg
-import kron.sys.kr_setsockopt
-import kron.sys.kr_shutdown
-import kron.sys.kr_socket_address
-import kron.sys.kr_socket
-import kron.sys.kr_syscall6
-import kron.sys.kr_write
 
 /**
  * libc through cinterop: io_uring's three syscalls (glibc wraps none of them, so they go through `syscall`),
@@ -38,59 +15,59 @@ internal object Native {
     private const val SYS_IO_URING_REGISTER = 427L
 
     fun ioUringSetup(entries: Int, params: Long): Int =
-        kr_syscall6(SYS_IO_URING_SETUP, entries.toLong(), params, 0L, 0L, 0L, 0L).toInt()
+        Sys.syscall6(SYS_IO_URING_SETUP, entries.toLong(), params, 0L, 0L, 0L, 0L).toInt()
 
     fun ioUringEnter(fd: Int, toSubmit: Int, minComplete: Int, flags: Int, arg: Long, argSize: Long): Int =
-        kr_syscall6(
+        Sys.syscall6(
             SYS_IO_URING_ENTER, fd.toLong(), toSubmit.toLong() and 0xFFFF_FFFFL,
             minComplete.toLong() and 0xFFFF_FFFFL, flags.toLong(), arg, argSize,
         ).toInt()
 
     fun ioUringRegister(fd: Int, opcode: Int, arg: Long, nrArgs: Int): Int =
-        kr_syscall6(SYS_IO_URING_REGISTER, fd.toLong(), opcode.toLong(), arg, nrArgs.toLong(), 0L, 0L).toInt()
+        Sys.syscall6(SYS_IO_URING_REGISTER, fd.toLong(), opcode.toLong(), arg, nrArgs.toLong(), 0L, 0L).toInt()
 
     /** The mapping's address, or a negative errno. */
     fun mmap(length: Long, prot: Int, flags: Int, fd: Int, offset: Long): Long =
-        kr_mmap(length, prot, flags, fd, offset)
+        Sys.mmap(length, prot, flags, fd, offset)
 
-    fun munmap(addr: Long, length: Long): Int = kr_munmap(addr, length)
+    fun munmap(addr: Long, length: Long): Int = Sys.munmap(addr, length)
 
-    fun close(fd: Int): Int = kr_close(fd)
+    fun close(fd: Int): Int = Sys.close(fd)
 
-    fun socket(domain: Int, type: Int, protocol: Int): Int = kr_socket(domain, type, protocol)
+    fun socket(domain: Int, type: Int, protocol: Int): Int = Sys.socket(domain, type, protocol)
 
     fun setsockopt(fd: Int, level: Int, name: Int, value: Long, length: Int): Int =
-        kr_setsockopt(fd, level, name, value, length)
+        Sys.setsockopt(fd, level, name, value, length)
 
-    fun bind(fd: Int, addr: Long, length: Int): Int = kr_bind(fd, addr, length)
+    fun bind(fd: Int, addr: Long, length: Int): Int = Sys.bind(fd, addr, length)
 
-    fun listen(fd: Int, backlog: Int): Int = kr_listen(fd, backlog)
+    fun listen(fd: Int, backlog: Int): Int = Sys.listen(fd, backlog)
 
-    fun getsockname(fd: Int, addr: Long, lengthAddr: Long): Int = kr_getsockname(fd, addr, lengthAddr)
+    fun getsockname(fd: Int, addr: Long, lengthAddr: Long): Int = Sys.getsockname(fd, addr, lengthAddr)
 
     fun socketAddress(fd: Int, peer: Boolean, host: Long, hostLength: Int, port: Long): Int =
-        kr_socket_address(fd, if (peer) 1 else 0, host, hostLength, port)
+        Sys.socketAddress(fd, if (peer) 1 else 0, host, hostLength, port)
 
-    fun shutdown(fd: Int, how: Int): Int = kr_shutdown(fd, how)
+    fun shutdown(fd: Int, how: Int): Int = Sys.shutdown(fd, how)
 
-    fun eventfd(initval: Int, flags: Int): Int = kr_eventfd(initval, flags)
+    fun eventfd(initval: Int, flags: Int): Int = Sys.eventfd(initval, flags)
 
-    fun write(fd: Int, buf: Long, count: Long): Long = kr_write(fd, buf, count)
+    fun write(fd: Int, buf: Long, count: Long): Long = Sys.write(fd, buf, count)
 
-    fun read(fd: Int, buf: Long, count: Long): Long = kr_read(fd, buf, count)
+    fun read(fd: Int, buf: Long, count: Long): Long = Sys.read(fd, buf, count)
 
     // The direct socket calls TLS makes beside the ring: a teardown close_notify, and the kTLS RX handoff's
     // look at what is waiting. Best effort, so no errno: -1 is all a caller acts on.
-    fun send(fd: Int, buf: Long, length: Long, flags: Int): Long = kr_send(fd, buf, length, flags)
+    fun send(fd: Int, buf: Long, length: Long, flags: Int): Long = Sys.send(fd, buf, length, flags)
 
-    fun recv(fd: Int, buf: Long, length: Long, flags: Int): Long = kr_recv(fd, buf, length, flags)
+    fun recv(fd: Int, buf: Long, length: Long, flags: Int): Long = Sys.recv(fd, buf, length, flags)
 
-    fun sendmsg(fd: Int, msg: Long, flags: Int): Long = kr_sendmsg(fd, msg, flags)
+    fun sendmsg(fd: Int, msg: Long, flags: Int): Long = Sys.sendmsg(fd, msg, flags)
 
-    fun recvmsg(fd: Int, msg: Long, flags: Int): Long = kr_recvmsg(fd, msg, flags)
+    fun recvmsg(fd: Int, msg: Long, flags: Int): Long = Sys.recvmsg(fd, msg, flags)
 
     fun malloc(size: Long): Long {
-        val p = kr_malloc(size)
+        val p = Sys.malloc(size)
         if (p == 0L) {
             throw OutOfMemoryError("malloc($size)")
         }
@@ -101,7 +78,7 @@ internal object Native {
     /** [size] is rounded up to a multiple of [alignment], which aligned_alloc requires. */
     fun alignedAlloc(alignment: Long, size: Long): Long {
         val rounded = (size + alignment - 1) / alignment * alignment
-        val p = kr_aligned_alloc(alignment, rounded)
+        val p = Sys.alignedAlloc(alignment, rounded)
         if (p == 0L) {
             throw OutOfMemoryError("aligned_alloc($alignment, $size)")
         }
@@ -111,18 +88,18 @@ internal object Native {
 
     fun free(addr: Long) {
         if (addr != 0L) {
-            kr_free(addr)
+            Sys.free(addr)
         }
     }
 
     /** Pins the calling thread to one CPU. */
-    fun pinCurrentThread(cpu: Int): Int = kr_pin_current_thread(cpu)
+    fun pinCurrentThread(cpu: Int): Int = Sys.pinCurrentThread(cpu)
 
     /** The CPUs the calling thread may run on, ascending: its affinity mask, as a cpuset or taskset narrows it. */
     fun allowedCpus(): IntArray {
         val out = malloc(4L * CPU_SETSIZE)
         try {
-            val count = kr_allowed_cpus(out, CPU_SETSIZE)
+            val count = Sys.allowedCpus(out, CPU_SETSIZE)
             if (count < 0) {
                 throw IllegalStateException("sched_getaffinity failed with errno ${-count}")
             }

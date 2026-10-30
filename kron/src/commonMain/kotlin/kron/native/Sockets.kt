@@ -1,8 +1,5 @@
 package kron
 
-import kotlinx.cinterop.ByteVar
-import kotlinx.cinterop.toCPointer
-import kotlinx.cinterop.toKString
 
 /** The socket calls made outside the ring: listeners, options, and the bound port. */
 internal object Sockets {
@@ -86,8 +83,7 @@ internal object Sockets {
                 return null
             }
 
-            val host = buffer.toCPointer<ByteVar>()!!.toKString()
-            return SocketAddress(host, getInt(buffer + ADDRESS_TEXT_SIZE))
+            return SocketAddress(cString(buffer, ADDRESS_TEXT_SIZE), getInt(buffer + ADDRESS_TEXT_SIZE))
         } finally {
             Native.free(buffer)
         }
@@ -95,6 +91,18 @@ internal object Sockets {
 
     // INET6_ADDRSTRLEN: room for the longest address inet_ntop writes, in either family.
     private const val ADDRESS_TEXT_SIZE = 46
+
+    // The NUL-terminated ASCII text at address, at most max bytes long.
+    private fun cString(address: Long, max: Int): String {
+        var length = 0
+        while (length < max && getByte(address + length) != 0.toByte()) {
+            length++
+        }
+
+        val bytes = ByteArray(length)
+        copyToArray(address, bytes, 0, length)
+        return bytes.decodeToString()
+    }
 
     /** The port a socket is bound to. */
     fun localPort(fd: Int): Int {

@@ -1,12 +1,5 @@
 package kron
 
-import kotlinx.cinterop.COpaquePointer
-import kotlinx.cinterop.StableRef
-import kotlinx.cinterop.asStableRef
-import kotlinx.cinterop.staticCFunction
-import kron.sys.kr_thread_join
-import kron.sys.kr_thread_start
-import kron.sys.kr_thread_timed_join
 import kotlin.concurrent.atomics.AtomicInt
 
 /**
@@ -26,7 +19,7 @@ class KronServer(
         }
     }
 
-    // pthread handles; 0 once joined, or before start. Joined only by the holder of joining: a thread can be joined
+    // Thread handles; 0 once joined, or before start. Joined only by the holder of joining: a thread can be joined
     // once, so another caller waits for the flag until the holder has seen every thread end.
     private val threads = LongArray(reactors.size)
     private val joining = AtomicInt(0)
@@ -44,11 +37,9 @@ class KronServer(
         }
 
         for ((i, reactor) in reactors.withIndex()) {
-            val ref = StableRef.create(reactor)
-            val thread = kr_thread_start(reactorEntry, ref.asCPointer(), "reactor-${reactor.id}")
+            val thread = startReactorThread(reactor)
             if (thread < 0) {
-                ref.dispose()
-                throw IllegalStateException("pthread_create failed with errno ${-thread}")
+                throw IllegalStateException("Starting reactor-${reactor.id}'s thread failed with errno ${-thread}")
             }
             threads[i] = thread
         }
@@ -67,7 +58,7 @@ class KronServer(
             for (i in threads.indices) {
                 val thread = threads[i]
                 if (thread != 0L) {
-                    kr_thread_join(thread)
+                    joinReactorThread(thread)
                     threads[i] = 0L
                 }
             }
@@ -102,7 +93,7 @@ class KronServer(
                         continue
                     }
 
-                    if (kr_thread_timed_join(thread, remainingMs) == 0) {
+                    if (timedJoinReactorThread(thread, remainingMs) == 0) {
                         threads[i] = 0L
                     }
                 }
@@ -127,18 +118,10 @@ class KronServer(
     }
 }
 
-// A reactor thread's entry, with the ref start() made. An exception escaping into C would end the process, so
-// it ends only the thread, as an uncaught one does on the JVM.
-private val reactorEntry = staticCFunction<COpaquePointer?, COpaquePointer?> { argument ->
-    val ref = argument!!.asStableRef<Reactor>()
-    val reactor = ref.get()
-    ref.dispose()
+/** A thread named after [reactor] that runs it, started: its handle, or a negative errno. */
+internal expect fun startReactorThread(reactor: Reactor): Long
 
-    try {
-        reactor.run()
-    } catch (e: Throwable) {
-        printErr("[r${reactor.id}] reactor thread ended: ${e.stackTraceToString()}")
-    }
+internal expect fun joinReactorThread(handle: Long)
 
-    null
-}
+/** As [joinReactorThread], giving up after [timeoutMs]: 0 once the thread has ended, negative if it has not. */
+internal expect fun timedJoinReactorThread(handle: Long, timeoutMs: Long): Int

@@ -86,22 +86,22 @@ import kron.getByte
  * binary through cinterop. Pointers are `Long` addresses, as everywhere in this port; the conversions to the
  * generated pointer types stay in here.
  */
-internal object BoringSsl {
-    const val SSL_FILETYPE_PEM = 1
-    const val SSL_ERROR_WANT_READ = 2
-    const val SSL_ERROR_WANT_WRITE = 3
-    const val SSL_ERROR_ZERO_RETURN = 6
-    const val TLS1_2_VERSION: Short = 0x0303
-    const val TLS1_3_VERSION: Short = 0x0304
+internal actual object BoringSsl {
+    actual const val SSL_FILETYPE_PEM = 1
+    actual const val SSL_ERROR_WANT_READ = 2
+    actual const val SSL_ERROR_WANT_WRITE = 3
+    actual const val SSL_ERROR_ZERO_RETURN = 6
+    actual const val TLS1_2_VERSION: Short = 0x0303
+    actual const val TLS1_3_VERSION: Short = 0x0304
 
     /** The RFC 8446 id of the one suite kTLS is programmed for. */
-    const val TLS_AES_128_GCM_SHA256: Short = 0x1301
-    const val SSL_TLSEXT_ERR_OK = 0
-    const val SSL_TLSEXT_ERR_NOACK = 3
-    const val SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000
+    actual const val TLS_AES_128_GCM_SHA256: Short = 0x1301
+    actual const val SSL_TLSEXT_ERR_OK = 0
+    actual const val SSL_TLSEXT_ERR_NOACK = 3
+    actual const val SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000
 
     /** On a memory BIO: a pointer to its buffer, without consuming it. */
-    const val BIO_CTRL_INFO = 3
+    actual const val BIO_CTRL_INFO = 3
 
     private const val ERR_LIB_PEM = 9
     private const val PEM_R_NO_START_LINE = 110
@@ -109,40 +109,40 @@ internal object BoringSsl {
     private const val X509_R_KEY_TYPE_MISMATCH = 115
     private const val X509_R_KEY_VALUES_MISMATCH = 116
 
-    fun serverMethod(): Long = TLS_server_method().address()
+    actual fun serverMethod(): Long = TLS_server_method().address()
 
-    fun ctxNew(method: Long): Long = SSL_CTX_new(method.toCPointer<SSL_METHOD>()).address()
+    actual fun ctxNew(method: Long): Long = SSL_CTX_new(method.toCPointer<SSL_METHOD>()).address()
 
-    fun ctxFree(ctx: Long) {
+    actual fun ctxFree(ctx: Long) {
         SSL_CTX_free(ctx.toCPointer<SSL_CTX>())
     }
 
-    fun useCertificateChainFile(ctx: Long, path: String): Int =
+    actual fun useCertificateChainFile(ctx: Long, path: String): Int =
         SSL_CTX_use_certificate_chain_file(ctx.toCPointer<SSL_CTX>(), path)
 
-    fun usePrivateKeyFile(ctx: Long, path: String): Int =
+    actual fun usePrivateKeyFile(ctx: Long, path: String): Int =
         SSL_CTX_use_PrivateKey_file(ctx.toCPointer<SSL_CTX>(), path, SSL_FILETYPE_PEM)
 
-    fun checkPrivateKey(ctx: Long): Int = SSL_CTX_check_private_key(ctx.toCPointer<SSL_CTX>())
+    actual fun checkPrivateKey(ctx: Long): Int = SSL_CTX_check_private_key(ctx.toCPointer<SSL_CTX>())
 
-    fun useCertificate(ctx: Long, x509: Long): Int =
+    actual fun useCertificate(ctx: Long, x509: Long): Int =
         SSL_CTX_use_certificate(ctx.toCPointer<SSL_CTX>(), x509.toCPointer<X509>())
 
-    fun usePrivateKey(ctx: Long, pkey: Long): Int =
+    actual fun usePrivateKey(ctx: Long, pkey: Long): Int =
         SSL_CTX_use_PrivateKey(ctx.toCPointer<SSL_CTX>(), pkey.toCPointer<EVP_PKEY>())
 
     /** Takes ownership of [x509] on success. */
-    fun addExtraChainCert(ctx: Long, x509: Long): Int =
+    actual fun addExtraChainCert(ctx: Long, x509: Long): Int =
         SSL_CTX_add_extra_chain_cert(ctx.toCPointer<SSL_CTX>(), x509.toCPointer<X509>())
 
-    fun setMinProtoVersion(ctx: Long, version: Short): Int =
+    actual fun setMinProtoVersion(ctx: Long, version: Short): Int =
         SSL_CTX_set_min_proto_version(ctx.toCPointer<SSL_CTX>(), version.toUShort())
 
-    fun setMaxProtoVersion(ctx: Long, version: Short): Int =
+    actual fun setMaxProtoVersion(ctx: Long, version: Short): Int =
         SSL_CTX_set_max_proto_version(ctx.toCPointer<SSL_CTX>(), version.toUShort())
 
     /** TLS 1.3 suites by protocol id, in server preference order; an empty list means BoringSSL's own order. */
-    fun setTls13Ciphers(ctx: Long, ids: ShortArray): Int = memScoped {
+    actual fun setTls13Ciphers(ctx: Long, ids: ShortArray): Int = memScoped {
         val list = allocArray<UShortVar>(ids.size.coerceAtLeast(1))
         for (i in ids.indices) {
             list[i] = ids[i].toUShort()
@@ -155,7 +155,7 @@ internal object BoringSsl {
      * The id of the TLS 1.3 suite called [name] (its RFC 8446 name), or null when this BoringSSL does not
      * implement it - asked of the library, which knows the ids 0x1301-0x1305 it offers.
      */
-    fun tls13SuiteId(name: String): Short? {
+    actual fun tls13SuiteId(name: String): Short? {
         for (id in 0x1301..0x1305) {
             val cipher = SSL_get_cipher_by_value(id.toUShort())
             if (cipher != null && SSL_CIPHER_standard_name(cipher)?.toKString() == name) {
@@ -166,52 +166,52 @@ internal object BoringSsl {
         return null
     }
 
-    fun setCipherList(ctx: Long, list: String): Int = SSL_CTX_set_cipher_list(ctx.toCPointer<SSL_CTX>(), list)
+    actual fun setCipherList(ctx: Long, list: String): Int = SSL_CTX_set_cipher_list(ctx.toCPointer<SSL_CTX>(), list)
 
-    fun setNumTickets(ctx: Long, count: Long): Int = SSL_CTX_set_num_tickets(ctx.toCPointer<SSL_CTX>(), count.convert())
+    actual fun setNumTickets(ctx: Long, count: Long): Int = SSL_CTX_set_num_tickets(ctx.toCPointer<SSL_CTX>(), count.convert())
 
-    fun setOptions(ctx: Long, options: Int): Int =
+    actual fun setOptions(ctx: Long, options: Int): Int =
         SSL_CTX_set_options(ctx.toCPointer<SSL_CTX>(), options.toUInt()).toInt()
 
-    fun setKeylogCallback(ctx: Long, callback: Long) {
+    actual fun setKeylogCallback(ctx: Long, callback: Long) {
         SSL_CTX_set_keylog_callback(ctx.toCPointer<SSL_CTX>(), callback.toCPointer())
     }
 
-    fun setAlpnSelectCallback(ctx: Long, callback: Long, arg: Long) {
+    actual fun setAlpnSelectCallback(ctx: Long, callback: Long, arg: Long) {
         SSL_CTX_set_alpn_select_cb(ctx.toCPointer<SSL_CTX>(), callback.toCPointer(), arg.toCPointer<ByteVar>())
     }
 
-    fun setDefaultPasswordCallback(ctx: Long, callback: Long) {
+    actual fun setDefaultPasswordCallback(ctx: Long, callback: Long) {
         SSL_CTX_set_default_passwd_cb(ctx.toCPointer<SSL_CTX>(), callback.toCPointer())
     }
 
-    fun setSessionIdContext(ctx: Long, id: Long, length: Long): Int =
+    actual fun setSessionIdContext(ctx: Long, id: Long, length: Long): Int =
         SSL_CTX_set_session_id_context(ctx.toCPointer<SSL_CTX>(), id.toCPointer<UByteVar>(), length.convert())
 
-    fun sslNew(ctx: Long): Long = SSL_new(ctx.toCPointer<SSL_CTX>()).address()
+    actual fun sslNew(ctx: Long): Long = SSL_new(ctx.toCPointer<SSL_CTX>()).address()
 
     /** Frees both BIOs as well. */
-    fun sslFree(ssl: Long) {
+    actual fun sslFree(ssl: Long) {
         SSL_free(ssl.toCPointer<SSL>())
     }
 
-    fun setAcceptState(ssl: Long) {
+    actual fun setAcceptState(ssl: Long) {
         SSL_set_accept_state(ssl.toCPointer<SSL>())
     }
 
     /** [ssl] owns both BIOs from here. */
-    fun setBio(ssl: Long, rbio: Long, wbio: Long) {
+    actual fun setBio(ssl: Long, rbio: Long, wbio: Long) {
         SSL_set_bio(ssl.toCPointer<SSL>(), rbio.toCPointer<BIO>(), wbio.toCPointer<BIO>())
     }
 
-    fun shutdown(ssl: Long): Int = SSL_shutdown(ssl.toCPointer<SSL>())
+    actual fun shutdown(ssl: Long): Int = SSL_shutdown(ssl.toCPointer<SSL>())
 
     /** Whether the handshake is still running: SSL_shutdown on one that is only queues an error. */
-    fun inInit(ssl: Long): Boolean = SSL_in_init(ssl.toCPointer<SSL>()) != 0
+    actual fun inInit(ssl: Long): Boolean = SSL_in_init(ssl.toCPointer<SSL>()) != 0
 
-    fun version(ssl: Long): Int = SSL_version(ssl.toCPointer<SSL>())
+    actual fun version(ssl: Long): Int = SSL_version(ssl.toCPointer<SSL>())
 
-    fun currentCipherId(ssl: Long): Int {
+    actual fun currentCipherId(ssl: Long): Int {
         val cipher = SSL_get_current_cipher(ssl.toCPointer<SSL>())
         if (cipher == null) {
             return 0
@@ -221,7 +221,7 @@ internal object BoringSsl {
     }
 
     /** What ALPN settled on, or null when the client offered nothing this port serves. */
-    fun alpnSelected(ssl: Long): String? = memScoped {
+    actual fun alpnSelected(ssl: Long): String? = memScoped {
         val data = alloc<CPointerVar<UByteVar>>()
         val length = alloc<UIntVar>()
         SSL_get0_alpn_selected(ssl.toCPointer<SSL>(), data.ptr, length.ptr)
@@ -242,7 +242,7 @@ internal object BoringSsl {
     // connection left would read as this one's fatal error. The raw entry points stay private for that reason.
 
     /** SSL_accept: 0 once the handshake is done, otherwise SSL_get_error's code. */
-    fun accept(ssl: Long): Int {
+    actual fun accept(ssl: Long): Int {
         ERR_clear_error()
         val ret = SSL_accept(ssl.toCPointer<SSL>())
         if (ret == 1) {
@@ -253,7 +253,7 @@ internal object BoringSsl {
     }
 
     /** SSL_read: the bytes read, or minus SSL_get_error's code. */
-    fun read(ssl: Long, buffer: Long, length: Int): Int {
+    actual fun read(ssl: Long, buffer: Long, length: Int): Int {
         ERR_clear_error()
         val n = SSL_read(ssl.toCPointer<SSL>(), buffer.toCPointer<ByteVar>(), length)
         if (n > 0) {
@@ -264,7 +264,7 @@ internal object BoringSsl {
     }
 
     /** SSL_write of native bytes: the bytes taken, or minus SSL_get_error's code. */
-    fun write(ssl: Long, buffer: Long, length: Int): Int {
+    actual fun write(ssl: Long, buffer: Long, length: Int): Int {
         ERR_clear_error()
         val n = SSL_write(ssl.toCPointer<SSL>(), buffer.toCPointer<ByteVar>(), length)
         if (n > 0) {
@@ -275,7 +275,7 @@ internal object BoringSsl {
     }
 
     /** SSL_write straight from a heap array, pinned for the call. */
-    fun write(ssl: Long, source: ByteArray, offset: Int, length: Int): Int {
+    actual fun write(ssl: Long, source: ByteArray, offset: Int, length: Int): Int {
         ERR_clear_error()
         val n = source.usePinned { SSL_write(ssl.toCPointer<SSL>(), it.addressOf(offset), length) }
         if (n > 0) {
@@ -285,43 +285,43 @@ internal object BoringSsl {
         return -SSL_get_error(ssl.toCPointer<SSL>(), n)
     }
 
-    fun memoryBio(): Long = BIO_new(BIO_s_mem()).address()
+    actual fun memoryBio(): Long = BIO_new(BIO_s_mem()).address()
 
     /** A read-only BIO over [length] bytes at [address], which must outlive it. */
-    fun memoryBuffer(address: Long, length: Long): Long =
+    actual fun memoryBuffer(address: Long, length: Long): Long =
         BIO_new_mem_buf(address.toCPointer<ByteVar>(), length).address()
 
-    fun bioFree(bio: Long): Int = BIO_free(bio.toCPointer<BIO>())
+    actual fun bioFree(bio: Long): Int = BIO_free(bio.toCPointer<BIO>())
 
-    fun bioWrite(bio: Long, data: Long, length: Int): Int =
+    actual fun bioWrite(bio: Long, data: Long, length: Int): Int =
         BIO_write(bio.toCPointer<BIO>(), data.toCPointer<ByteVar>(), length)
 
-    fun bioRead(bio: Long, data: Long, length: Int): Int =
+    actual fun bioRead(bio: Long, data: Long, length: Int): Int =
         BIO_read(bio.toCPointer<BIO>(), data.toCPointer<ByteVar>(), length)
 
-    fun bioPending(bio: Long): Long = BIO_ctrl_pending(bio.toCPointer<BIO>()).toLong()
+    actual fun bioPending(bio: Long): Long = BIO_ctrl_pending(bio.toCPointer<BIO>()).toLong()
 
-    fun bioCtrl(bio: Long, cmd: Int, larg: Long, parg: Long): Long =
+    actual fun bioCtrl(bio: Long, cmd: Int, larg: Long, parg: Long): Long =
         BIO_ctrl(bio.toCPointer<BIO>(), cmd, larg, parg.toCPointer<ByteVar>())
 
-    fun readX509(bio: Long): Long = PEM_read_bio_X509(bio.toCPointer<BIO>(), null, null, null).address()
+    actual fun readX509(bio: Long): Long = PEM_read_bio_X509(bio.toCPointer<BIO>(), null, null, null).address()
 
-    fun readPrivateKey(bio: Long): Long = PEM_read_bio_PrivateKey(bio.toCPointer<BIO>(), null, null, null).address()
+    actual fun readPrivateKey(bio: Long): Long = PEM_read_bio_PrivateKey(bio.toCPointer<BIO>(), null, null, null).address()
 
-    fun x509Free(x509: Long) {
+    actual fun x509Free(x509: Long) {
         X509_free(x509.toCPointer<X509>())
     }
 
-    fun pkeyFree(pkey: Long) {
+    actual fun pkeyFree(pkey: Long) {
         EVP_PKEY_free(pkey.toCPointer<EVP_PKEY>())
     }
 
-    fun clearError() {
+    actual fun clearError() {
         ERR_clear_error()
     }
 
     /** Whether the queued error says a key does not belong to the certificate loaded. */
-    fun errorIsKeyMismatch(): Boolean {
+    actual fun errorIsKeyMismatch(): Boolean {
         val code = ERR_peek_error().toInt()
         val reason = code and 0xFFF
         return (code ushr 24) == ERR_LIB_X509 &&
@@ -333,7 +333,7 @@ internal object BoringSsl {
      * exhausted. Anything else means a read stopped on a malformed block - the difference between the last
      * certificate of a bundle and the rest of it silently dropped.
      */
-    fun errorIsEndOfPem(): Boolean {
+    actual fun errorIsEndOfPem(): Boolean {
         var sawEnd = false
         var sawOther = false
         while (true) {
@@ -353,7 +353,7 @@ internal object BoringSsl {
     }
 
     /** The oldest queued error as text, and the queue drained so the next caller does not read it again. */
-    fun lastError(): String {
+    actual fun lastError(): String {
         val code = ERR_get_error()
         if (code == 0u) {
             return "no BoringSSL error"
@@ -375,7 +375,7 @@ internal object BoringSsl {
     }
 
     /** HMAC-SHA256 of [data] under [key], for the kTLS key schedule. */
-    fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray {
+    actual fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray {
         val out = ByteArray(32)
         val ok = key.usePinned { k ->
             data.usePinned { d ->
@@ -396,7 +396,7 @@ internal object BoringSsl {
         return out
     }
 
-    fun cString(address: Long): String = address.toCPointer<ByteVar>()?.toKString() ?: ""
+    actual fun cString(address: Long): String = address.toCPointer<ByteVar>()?.toKString() ?: ""
 
     private fun CPointer<*>?.address(): Long = this?.rawValue?.toLong() ?: 0L
 }

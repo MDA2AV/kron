@@ -1,42 +1,9 @@
 package kron
 
-import kotlinx.cinterop.COpaquePointer
-import kotlinx.cinterop.IntVar
-import kotlinx.cinterop.StableRef
-import kotlinx.cinterop.addressOf
-import kotlinx.cinterop.alloc
-import kotlinx.cinterop.asStableRef
-import kotlinx.cinterop.convert
-import kotlinx.cinterop.memScoped
-import kotlinx.cinterop.ptr
-import kotlinx.cinterop.reinterpret
-import kotlinx.cinterop.sizeOf
-import kotlinx.cinterop.staticCFunction
-import kotlinx.cinterop.usePinned
-import kotlinx.cinterop.value
-import platform.posix.AF_INET
-import platform.posix.EINTR
-import platform.posix.MSG_NOSIGNAL
-import platform.posix.SHUT_WR
-import platform.posix.SOCK_STREAM
-import platform.posix.SOL_SOCKET
-import platform.posix.SO_RCVBUF
-import platform.posix.SO_RCVTIMEO
-import platform.posix.errno
-import platform.posix.ioctl
-import platform.posix.recv
-import platform.posix.send
-import platform.posix.setsockopt
-import platform.posix.shutdown
-import platform.posix.sockaddr_in
-import platform.posix.socket
-import platform.posix.timeval
-import platform.posix.usleep
 import kotlin.concurrent.atomics.AtomicInt
-import kron.sys.kr_thread_join
-import kron.sys.kr_thread_start
 
-// What the JVM tests took from java.util.concurrent and java.net.Socket.
+// What the JVM tests took from java.util.concurrent and java.net.Socket, on both platforms: the client below makes
+// the same system calls on each, kron's own and those of TestSys.
 
 /** A count-down latch, polled: the waits in these tests are short. */
 class Latch(count: Int) {
@@ -55,55 +22,79 @@ class Latch(count: Int) {
 
     fun await(timeoutMs: Long): Boolean {
         val deadline = Clock.monotonicMs() + timeoutMs
-
         while (remaining.load() > 0) {
             if (Clock.monotonicMs() >= deadline) {
                 return false
             }
-            usleep(1000u)
+
+            sleepMs(1)
         }
 
         return true
     }
 }
 
+/** The calls a client socket makes that kron does not: each returns the result, or a negative errno. */
+internal expect object TestSys {
+    fun connect(fd: Int, address: Long, length: Int): Int
+
+    fun send(fd: Int, buffer: Long, length: Long, flags: Int): Long
+
+    fun recv(fd: Int, buffer: Long, length: Long, flags: Int): Long
+
+    /** ioctl(TIOCOUTQ): the bytes written and not yet acknowledged by the peer. */
+    fun unacknowledged(fd: Int): Int
+}
+
+/** A thread running [block], started; joined by [joinTestThread]. */
+internal expect fun startTestThread(block: () -> Unit): Long
+
+internal expect fun joinTestThread(handle: Long)
+
 /**
  * A blocking IPv4 client socket. A failed call throws [IOException] naming the errno; an interrupted one is
  * retried, as java.net.Socket does - a thread that created rings is interrupted when the kernel tears them down.
  */
 class TestSocket : AutoCloseable {
-    val fd: Int = socket(AF_INET, SOCK_STREAM, 0).also {
-        check(it >= 0) { "socket failed with errno $errno" }
+    val fd: Int = Native.socket(Sockets.AF_INET, Sockets.SOCK_STREAM, 0).also {
+        check(it >= 0) { "socket failed with errno ${-it}" }
     }
 
-    fun connect(port: Int, host: String = "127.0.0.1") = memScoped {
-        val addr = alloc<sockaddr_in>()
-        addr.sin_family = AF_INET.convert()
-        addr.sin_port = (((port and 0xFF) shl 8) or ((port ushr 8) and 0xFF)).toUShort()   // htons
-        val octets = host.split('.').map { it.toUInt() }
-        addr.sin_addr.s_addr =
-            octets[0] or (octets[1] shl 8) or (octets[2] shl 16) or (octets[3] shl 24)   // network order
+    fun connect(port: Int, host: String = "127.0.0.1") {
+        val addr = Native.malloc(SOCKADDR_IN_SIZE)
+        try {
+            zeroMemory(addr, SOCKADDR_IN_SIZE)
+            putShort(addr, Sockets.AF_INET.toShort())
+            putShort(addr + 2, (((port and 0xFF) shl 8) or ((port ushr 8) and 0xFF)).toShort())   // htons
+            val octets = host.split('.').map { it.toInt() }
+            for (i in 0 until 4) {
+                putByte(addr + 4 + i, octets[i].toByte())   // network order
+            }
 
-        if (platform.posix.connect(fd, addr.ptr.reinterpret(), sizeOf<sockaddr_in>().convert()) != 0) {
-            throw IOException("connect failed with errno $errno")
+            val rc = TestSys.connect(fd, addr, SOCKADDR_IN_SIZE.toInt())
+            if (rc != 0) {
+                throw IOException("connect failed with errno ${-rc}")
+            }
+        } finally {
+            Native.free(addr)
         }
     }
 
     /** A read that waits longer than this fails with EAGAIN (11). */
-    fun setReceiveTimeout(milliseconds: Int) = memScoped {
-        val tv = alloc<timeval>()
-        tv.tv_sec = (milliseconds / 1000).convert()
-        tv.tv_usec = (milliseconds % 1000 * 1000).convert()
-
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, tv.ptr, sizeOf<timeval>().convert())
+    fun setReceiveTimeout(milliseconds: Int) {
+        val tv = Native.malloc(TIMEVAL_SIZE)
+        try {
+            putLong(tv, (milliseconds / 1000).toLong())
+            putLong(tv + 8, (milliseconds % 1000 * 1000).toLong())
+            Native.setsockopt(fd, Sockets.SOL_SOCKET, SO_RCVTIMEO, tv, TIMEVAL_SIZE.toInt())
+        } finally {
+            Native.free(tv)
+        }
     }
 
     /** The kernel's receive buffer, before [connect]: small, so a peer's send backs up soon. */
-    fun setReceiveBuffer(bytes: Int) = memScoped {
-        val size = alloc<IntVar>()
-        size.value = bytes
-
-        setsockopt(fd, SOL_SOCKET, SO_RCVBUF, size.ptr, sizeOf<IntVar>().convert())
+    fun setReceiveBuffer(bytes: Int) {
+        Sockets.setInt(fd, Sockets.SOL_SOCKET, Sockets.SO_RCVBUF, bytes)
     }
 
     fun write(bytes: ByteArray) {
@@ -111,20 +102,24 @@ class TestSocket : AutoCloseable {
             return
         }
 
-        bytes.usePinned { pinned ->
+        val buffer = Native.malloc(bytes.size.toLong())
+        try {
+            copyFromArray(bytes, 0, buffer, bytes.size)
             var offset = 0
-
             while (offset < bytes.size) {
-                val n = send(fd, pinned.addressOf(offset), (bytes.size - offset).convert(), MSG_NOSIGNAL)
+                val n = TestSys.send(fd, buffer + offset, (bytes.size - offset).toLong(), Sockets.MSG_NOSIGNAL)
                 if (n < 0) {
-                    val e = errno
-                    if (e == EINTR) {
+                    if (n == -EINTR.toLong()) {
                         continue
                     }
-                    throw IOException("send failed with errno $e")
+
+                    throw IOException("send failed with errno ${-n}")
                 }
+
                 offset += n.toInt()
             }
+        } finally {
+            Native.free(buffer)
         }
     }
 
@@ -139,16 +134,25 @@ class TestSocket : AutoCloseable {
 
     /** Up to [length] bytes; -1 once the peer has ended the stream. */
     fun read(into: ByteArray, offset: Int, length: Int): Int {
-        while (true) {
-            val n = into.usePinned { recv(fd, it.addressOf(offset), length.convert(), 0) }
-            if (n >= 0) {
-                return if (n == 0L) -1 else n.toInt()
-            }
+        if (length == 0) {
+            return 0
+        }
 
-            val e = errno
-            if (e != EINTR) {
-                throw IOException("recv failed with errno $e")
+        val buffer = Native.malloc(length.toLong())
+        try {
+            while (true) {
+                val n = TestSys.recv(fd, buffer, length.toLong(), 0)
+                if (n >= 0) {
+                    copyToArray(buffer, into, offset, n.toInt())
+                    return if (n == 0L) -1 else n.toInt()
+                }
+
+                if (n != -EINTR.toLong()) {
+                    throw IOException("recv failed with errno ${-n}")
+                }
             }
+        } finally {
+            Native.free(buffer)
         }
     }
 
@@ -156,12 +160,12 @@ class TestSocket : AutoCloseable {
     fun readBytes(count: Int): ByteArray {
         val bytes = ByteArray(count)
         var got = 0
-
         while (got < count) {
             val n = read(bytes, got, count - got)
             if (n < 0) {
                 return bytes.copyOf(got)
             }
+
             got += n
         }
 
@@ -172,12 +176,12 @@ class TestSocket : AutoCloseable {
     fun readToEnd(): ByteArray {
         val out = ArrayList<Byte>()
         val chunk = ByteArray(16 * 1024)
-
         while (true) {
             val n = read(chunk, 0, chunk.size)
             if (n < 0) {
                 return out.toByteArray()
             }
+
             for (i in 0 until n) {
                 out.add(chunk[i])
             }
@@ -190,38 +194,37 @@ class TestSocket : AutoCloseable {
      */
     fun awaitAcknowledged(timeoutMs: Long): Boolean {
         val deadline = Clock.monotonicMs() + timeoutMs
-
         while (true) {
-            if (unacknowledgedBytes() == 0) {
+            val outstanding = TestSys.unacknowledged(fd)
+            if (outstanding < 0) {
+                throw IOException("ioctl(TIOCOUTQ) failed with errno ${-outstanding}")
+            }
+
+            if (outstanding == 0) {
                 return true
             }
+
             if (Clock.monotonicMs() >= deadline) {
                 return false
             }
-            usleep(1000u)
-        }
-    }
 
-    private fun unacknowledgedBytes(): Int = memScoped {
-        val bytes = alloc<IntVar>()
-        if (ioctl(fd, TIOCOUTQ, bytes.ptr) != 0) {
-            throw IOException("ioctl(TIOCOUTQ) failed with errno $errno")
+            sleepMs(1)
         }
-
-        bytes.value
     }
 
     fun shutdownOutput() {
-        shutdown(fd, SHUT_WR)
+        Native.shutdown(fd, Sockets.SHUT_WR)
     }
 
     override fun close() {
-        platform.posix.close(fd)
+        Native.close(fd)
     }
 
     private companion object {
-        // SIOCOUTQ: bytes written and not yet acknowledged (asm-generic/ioctls.h).
-        const val TIOCOUTQ = 0x5411UL
+        const val SOCKADDR_IN_SIZE = 16L
+        const val TIMEVAL_SIZE = 16L
+        const val SO_RCVTIMEO = 20
+        const val EINTR = 4
     }
 }
 
@@ -231,31 +234,16 @@ class TestThreads {
 
     /** Runs [block] on a new thread. */
     fun start(block: () -> Unit) {
-        val ref = StableRef.create(block)
-        val thread = kr_thread_start(threadEntry, ref.asCPointer(), "test")
-        check(thread > 0) { "pthread_create failed with errno ${-thread}" }
+        val thread = startTestThread(block)
+        check(thread > 0) { "starting a test thread failed with errno ${-thread}" }
         started.offer(thread)
     }
 
     fun joinAll() {
         while (true) {
-            kr_thread_join(started.poll() ?: return)
+            joinTestThread(started.poll() ?: return)
         }
     }
-}
-
-private val threadEntry = staticCFunction<COpaquePointer?, COpaquePointer?> { argument ->
-    val ref = argument!!.asStableRef<() -> Unit>()
-    val block = ref.get()
-    ref.dispose()
-
-    try {
-        block()
-    } catch (e: Throwable) {
-        println("test thread failed: ${e.stackTraceToString()}")
-    }
-
-    null
 }
 
 /** One reactor on a port the kernel picks, running [handler], started and listening. */
@@ -300,13 +288,13 @@ fun testConfig(
 /** Writes back everything it receives, straight from the recv buffers, until the peer is gone. */
 suspend fun echo(conn: TcpConnection) {
     val item = RecvItem()
-
     while (true) {
         val snapshot = conn.read()
         while (conn.tryGetItem(snapshot, item)) {
             if (item.hasBuffer) {
                 conn.write(item.address, item.length)
             }
+
             conn.returnBuffer(item)
         }
 

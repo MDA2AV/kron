@@ -21,20 +21,20 @@ import kron.sys.kr_memset
  * rings, provided buffers and write slabs are all read and written through these, each a plain load or store.
  */
 
-internal inline fun getByte(addr: Long): Byte = interpretPointed<ByteVar>(nativeNullPtr + addr).value
-internal inline fun putByte(addr: Long, v: Byte) {
+internal actual inline fun getByte(addr: Long): Byte = interpretPointed<ByteVar>(nativeNullPtr + addr).value
+internal actual inline fun putByte(addr: Long, v: Byte) {
     interpretPointed<ByteVar>(nativeNullPtr + addr).value = v
 }
-internal inline fun getShort(addr: Long): Short = interpretPointed<ShortVar>(nativeNullPtr + addr).value
-internal inline fun putShort(addr: Long, v: Short) {
+internal actual inline fun getShort(addr: Long): Short = interpretPointed<ShortVar>(nativeNullPtr + addr).value
+internal actual inline fun putShort(addr: Long, v: Short) {
     interpretPointed<ShortVar>(nativeNullPtr + addr).value = v
 }
-internal inline fun getInt(addr: Long): Int = interpretPointed<IntVar>(nativeNullPtr + addr).value
-internal inline fun putInt(addr: Long, v: Int) {
+internal actual inline fun getInt(addr: Long): Int = interpretPointed<IntVar>(nativeNullPtr + addr).value
+internal actual inline fun putInt(addr: Long, v: Int) {
     interpretPointed<IntVar>(nativeNullPtr + addr).value = v
 }
-internal inline fun getLong(addr: Long): Long = interpretPointed<LongVar>(nativeNullPtr + addr).value
-internal inline fun putLong(addr: Long, v: Long) {
+internal actual inline fun getLong(addr: Long): Long = interpretPointed<LongVar>(nativeNullPtr + addr).value
+internal actual inline fun putLong(addr: Long, v: Long) {
     interpretPointed<LongVar>(nativeNullPtr + addr).value = v
 }
 
@@ -42,16 +42,16 @@ internal inline fun putLong(addr: Long, v: Long) {
 // SINGLE_ISSUER | DEFER_TASKRUN and no SQPOLL the kernel reads and writes the rings only inside this thread's
 // own io_uring_enter, and that call is opaque to the compiler, so nothing moves across it. The weaker ordering of
 // arm64 does not change that: a CPU sees its own stores in order, and a migration in between is a full barrier.
-internal inline fun getIntAcquire(addr: Long): Int = getInt(addr)
-internal inline fun putIntRelease(addr: Long, v: Int) = putInt(addr, v)
-internal inline fun putShortRelease(addr: Long, v: Short) = putShort(addr, v)
+internal actual inline fun getIntAcquire(addr: Long): Int = getInt(addr)
+internal actual inline fun putIntRelease(addr: Long, v: Int) = putInt(addr, v)
+internal actual inline fun putShortRelease(addr: Long, v: Short) = putShort(addr, v)
 
 // Below this a copy stays in Kotlin: every call into C switches the thread's GC state, which costs more than
 // moving a few words.
 private const val C_COPY_MIN = 256
 
 /** Copies [length] bytes between native addresses; the ranges may overlap. */
-internal fun copyMemory(src: Long, dst: Long, length: Long) {
+internal actual fun copyMemory(src: Long, dst: Long, length: Long) {
     if (length >= C_COPY_MIN || (dst > src && dst < src + length)) {
         if (length > 0) {
             kr_memmove(dst, src, length)
@@ -72,7 +72,7 @@ internal fun copyMemory(src: Long, dst: Long, length: Long) {
 }
 
 /** Copies from a heap array into native memory. */
-internal fun copyFromArray(src: ByteArray, srcOffset: Int, dst: Long, length: Int) {
+internal actual fun copyFromArray(src: ByteArray, srcOffset: Int, dst: Long, length: Int) {
     if (length >= C_COPY_MIN) {
         src.usePinned {
             kr_memmove(dst, it.addressOf(srcOffset).rawValue.toLong(), length.toLong())
@@ -93,7 +93,7 @@ internal fun copyFromArray(src: ByteArray, srcOffset: Int, dst: Long, length: In
 }
 
 /** Copies from native memory into a heap array. */
-internal fun copyToArray(src: Long, dst: ByteArray, dstOffset: Int, length: Int) {
+internal actual fun copyToArray(src: Long, dst: ByteArray, dstOffset: Int, length: Int) {
     if (length >= C_COPY_MIN) {
         dst.usePinned {
             kr_memmove(it.addressOf(dstOffset).rawValue.toLong(), src, length.toLong())
@@ -113,7 +113,7 @@ internal fun copyToArray(src: Long, dst: ByteArray, dstOffset: Int, length: Int)
     }
 }
 
-internal fun zeroMemory(addr: Long, length: Long) {
+internal actual fun zeroMemory(addr: Long, length: Long) {
     if (length >= C_COPY_MIN) {
         kr_memset(addr, 0, length)
         return
@@ -131,29 +131,3 @@ internal fun zeroMemory(addr: Long, length: Long) {
     }
 }
 
-/**
- * Native memory by address, for the raw seam: what [RecvItem.address], [ReadBuffer.segmentAddress] and
- * [TcpConnection.getBuffer] point into. Nothing is checked, so stay inside what the item, segment or buffer
- * covers.
- */
-object Memory {
-    fun getByte(address: Long): Byte = kron.getByte(address)
-    fun putByte(address: Long, value: Byte) = kron.putByte(address, value)
-    fun getShort(address: Long): Short = kron.getShort(address)
-    fun putShort(address: Long, value: Short) = kron.putShort(address, value)
-    fun getInt(address: Long): Int = kron.getInt(address)
-    fun putInt(address: Long, value: Int) = kron.putInt(address, value)
-    fun getLong(address: Long): Long = kron.getLong(address)
-    fun putLong(address: Long, value: Long) = kron.putLong(address, value)
-
-    /** Copies [length] bytes of [source] from [sourceOffset] to [destination]. */
-    fun copy(source: ByteArray, sourceOffset: Int, destination: Long, length: Int) =
-        copyFromArray(source, sourceOffset, destination, length)
-
-    /** Copies [length] bytes from [source] into [destination] at [destinationOffset]. */
-    fun copy(source: Long, destination: ByteArray, destinationOffset: Int, length: Int) =
-        copyToArray(source, destination, destinationOffset, length)
-
-    /** Copies [length] bytes between native addresses. */
-    fun copy(source: Long, destination: Long, length: Long) = copyMemory(source, destination, length)
-}
