@@ -30,14 +30,15 @@ jobs:
         run: >-
           ./gradlew --no-daemon
           :kron:linkDebugTestLinuxX64 :kron:linkDebugTestLinuxArm64
+          :glyph11:linkDebugTestLinuxX64 :glyph11:linkDebugTestLinuxArm64
           :playground:linkReleaseExecutableLinuxX64 :playground:linkReleaseExecutableLinuxArm64
 
       - uses: actions/upload-artifact@v4
         with:
           name: tests
           path: |
-            kron/build/bin/linuxX64/debugTest/test.kexe
-            kron/build/bin/linuxArm64/debugTest/test.kexe
+            kron/build/bin/*/debugTest/test.kexe
+            glyph11/build/bin/*/debugTest/test.kexe
           retention-days: 7
 
   test:
@@ -63,7 +64,14 @@ jobs:
           echo "page size: $(getconf PAGESIZE)"
           echo "io_uring_disabled: $(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo n/a)"
 
-      - name: Tests on ${{ matrix.target }}
+      # One step per module, each run even when an earlier one failed.
+      - name: kron tests on ${{ matrix.target }}
         run: |
-          chmod +x ${{ matrix.target }}/debugTest/test.kexe
-          ./${{ matrix.target }}/debugTest/test.kexe
+          chmod +x kron/build/bin/${{ matrix.target }}/debugTest/test.kexe
+          ./kron/build/bin/${{ matrix.target }}/debugTest/test.kexe
+
+      - name: glyph11 tests on ${{ matrix.target }}
+        if: success() || failure()
+        run: |
+          chmod +x glyph11/build/bin/${{ matrix.target }}/debugTest/test.kexe
+          ./glyph11/build/bin/${{ matrix.target }}/debugTest/test.kexe
