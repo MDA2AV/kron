@@ -2,8 +2,9 @@
 #
 # Build BoringSSL (libssl + libcrypto) as static libraries for kron, with the Kotlin/Native toolchain's own clang
 # and sysroot (glibc 2.19 on x64, 2.25 on arm64), so they link into a kron binary as they are. Output, committed like
-# ioxide's .so files: native/linux-<arch>/libssl.a, native/linux-<arch>/libcrypto.a, and the headers they were built
-# from in native/include/openssl, the same for both.
+# ioxide's .so files: native/linux-<arch>/libssl.a, native/linux-<arch>/libcrypto.a, the same objects linked as
+# native/linux-<arch>/libkron_boringssl.so for the JVM target, and the headers they were built from in
+# native/include/openssl, the same for both.
 #
 #   scripts/build-boringssl.sh                   # linux-x64, with the pinned ref below
 #   scripts/build-boringssl.sh arm64             # linux-arm64, cross-compiled from x64 by the same clang
@@ -79,4 +80,37 @@ rm -rf "$HEADERS/openssl"
 cp -r "$WORK/boringssl/include/openssl" "$HEADERS/openssl"
 echo "$BORINGSSL_REF" >"$OUT/BORINGSSL_REF"
 
-echo "==> done: $(du -h "$OUT/libssl.a" | cut -f1) libssl.a, $(du -h "$OUT/libcrypto.a" | cut -f1) libcrypto.a"
+# The JVM target's copy, which it loads through FFM: one shared library, from a second build of the same sources with
+# BORINGSSL_SHARED_LIBRARY, which gives the public API default visibility - the static archives above keep it hidden,
+# as a static link wants. Symbolic, so its calls stay inside it whatever else the process loads, with the little of
+# the C++ runtime libssl needs linked in and kept local.
+build_shared() {
+    cmake -S "$WORK/boringssl" -B "$WORK/build-shared" -DCMAKE_BUILD_TYPE=Release "${CROSS[@]}" \
+        -DCMAKE_C_COMPILER="$LLVM/clang" -DCMAKE_CXX_COMPILER="$LLVM/clang++" \
+        -DCMAKE_C_FLAGS="$TARGET_FLAGS -DBORINGSSL_SHARED_LIBRARY" \
+        -DCMAKE_CXX_FLAGS="$TARGET_FLAGS -DBORINGSSL_SHARED_LIBRARY" -DCMAKE_ASM_FLAGS="$TARGET_FLAGS" \
+        -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG -g0" -DCMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBUG -g0" \
+        -DCMAKE_AR="$LLVM/llvm-ar" \
+        -DCMAKE_C_ARCHIVE_FINISH="<CMAKE_AR> s <TARGET>" -DCMAKE_CXX_ARCHIVE_FINISH="<CMAKE_AR> s <TARGET>" \
+        -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+        -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=lld" \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON >"$WORK/cmake-shared.log"
+    cmake --build "$WORK/build-shared" --target ssl crypto -j"$(nproc)" >"$WORK/build-shared.log"
+
+    echo '{ local: _ZSt*; _ZNSt*; _ZNKSt*; _ZTISt*; _ZTSSt*; _ZTVSt*; };' >"$WORK/std-local.map"
+    "$LLVM/clang++" $TARGET_FLAGS -fuse-ld=lld -shared -o "$OUT/libkron_boringssl.so" \
+        -Wl,-soname,libkron_boringssl.so \
+        -Wl,--whole-archive "$WORK/build-shared/libssl.a" "$WORK/build-shared/libcrypto.a" -Wl,--no-whole-archive \
+        -Wl,-Bsymbolic -Wl,--no-undefined -static-libstdc++ -static-libgcc -lpthread \
+        -Wl,--exclude-libs,libstdc++.a:libgcc.a:libgcc_eh.a -Wl,--version-script="$WORK/std-local.map"
+    # The toolchain ships no nm: the host's reads the dynamic symbols of either architecture.
+    nm -D --defined-only "$OUT/libkron_boringssl.so" | awk '{print $3}' >"$WORK/exports.txt"
+    for symbol in SSL_CTX_new SSL_CTX_set1_tls13_ciphers SSL_CTX_set_keylog_callback SSL_CTX_set_alpn_select_cb \
+        BIO_s_mem PEM_read_bio_PrivateKey ERR_error_string_n HMAC; do
+        grep -qx "$symbol" "$WORK/exports.txt" || { echo "libkron_boringssl.so does not export $symbol" >&2; exit 1; }
+    done
+}
+echo "==> building libkron_boringssl.so"
+build_shared
+
+echo "==> done: $(du -h "$OUT/libssl.a" | cut -f1) libssl.a, $(du -h "$OUT/libcrypto.a" | cut -f1) libcrypto.a, $(du -h "$OUT/libkron_boringssl.so" | cut -f1) libkron_boringssl.so"

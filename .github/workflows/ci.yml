@@ -33,6 +33,9 @@ jobs:
           :glyph11:linkDebugTestLinuxX64 :glyph11:linkDebugTestLinuxArm64
           :playground:linkReleaseExecutableLinuxX64 :playground:linkReleaseExecutableLinuxArm64
 
+      - name: kron's and glyph11's tests on the JVM, and the playground's jar
+        run: ./gradlew --no-daemon :kron:jvmTest :glyph11:jvmTest :playground:jvmFatJar
+
       - uses: actions/upload-artifact@v4
         with:
           name: tests
