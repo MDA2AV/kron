@@ -13,4 +13,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "kron"
 
-include("kron", "glyph11", "playground")
+include("kron", "glyph11", "ktor", "playground")
