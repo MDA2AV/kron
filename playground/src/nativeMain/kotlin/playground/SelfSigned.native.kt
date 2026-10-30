@@ -43,9 +43,9 @@ import kron.boringssl.X509_sign
  * for localhost, valid for a year, made with the BoringSSL kron links. Clients have to skip verification
  * (`curl -k`).
  */
-object SelfSigned {
+actual object SelfSigned {
     /** The certificate and its private key, PEM-encoded. */
-    fun generate(): Pair<String, String> {
+    actual fun generate(): Pair<String, String> {
         val ec = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1)
         check(ec != null && EC_KEY_generate_key(ec) == 1) { "EC P-256 key generation failed" }
 

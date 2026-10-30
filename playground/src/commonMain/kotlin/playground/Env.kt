@@ -1,18 +1,12 @@
 package playground
 
-import kotlinx.cinterop.toKString
-import platform.posix._SC_NPROCESSORS_ONLN
-import platform.posix.fputs
-import platform.posix.getenv
-import platform.posix.stderr
-import platform.posix.sysconf
 
 /**
  * The PLAYGROUND_* environment knobs, the way the C# samples read them: the sample's literal is its
  * configuration, and a set variable overrides it. Unparseable values fall back to the literal.
  */
 object Env {
-    private fun get(name: String): String? = getenv(name)?.toKString()
+    private fun get(name: String): String? = environment(name)
 
     fun int(name: String, fallback: Int): Int = get(name)?.toIntOrNull() ?: fallback
 
@@ -31,10 +25,13 @@ object Env {
 
     fun string(name: String): String? = get(name)?.takeIf { it.isNotBlank() }
 
-    fun processors(): Int = sysconf(_SC_NPROCESSORS_ONLN).toInt()
+    fun processors(): Int = onlineProcessors()
 }
 
 /** One line to stderr. */
-fun log(message: String) {
-    fputs(message + "\n", stderr)
-}
+expect fun log(message: String)
+
+internal expect fun environment(name: String): String?
+
+// The CPUs online, as sysconf counts them: not narrowed by the process's affinity on either platform.
+internal expect fun onlineProcessors(): Int
