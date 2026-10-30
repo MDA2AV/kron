@@ -18,6 +18,7 @@ import kron.KronServer
 import kron.ServerConfig
 import kron.TcpOptions
 import platform.posix.usleep
+import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicReference
 
@@ -68,6 +69,10 @@ class KronApplicationEngine(
     private var server: KronServer? = null
     private var rootJob: Job? = null
 
+    // Why a reactor could not start or went down, from its thread; and whether stop() has finished.
+    private val fault = AtomicReference<Throwable?>(null)
+    @Volatile private var stopped = false
+
     override fun start(wait: Boolean): ApplicationEngine {
         val connectors = configuration.connectors.toList()
         require(connectors.isNotEmpty()) { "kron needs a connector to listen on" }
@@ -99,7 +104,6 @@ class KronApplicationEngine(
 
         // Each reactor reports in from its own thread: its ports once it listens, or why it could not start.
         val listening = AtomicInt(0)
-        val fault = AtomicReference<Throwable?>(null)
         var boundPorts = IntArray(0)
         val server = KronServer(config, onStart = { reactor ->
             if (reactor.id == 0) {
@@ -131,6 +135,17 @@ class KronApplicationEngine(
         monitor.raiseCatching(ServerReady, environment, environment.log)
 
         if (wait) {
+            // Polled rather than joined: Ktor stops the engine from its SIGINT and SIGTERM handler, which can run on
+            // this very thread - from inside join() it would wait for a flag the interrupted join holds.
+            while (!stopped) {
+                fault.load()?.let { cause ->
+                    server.close()
+                    throw cause
+                }
+
+                usleep(50_000u)
+            }
+
             server.join()
         }
 
@@ -145,5 +160,6 @@ class KronApplicationEngine(
         // Open connections are served to their end for the grace period; the reactors then stop and tear down.
         server.close(gracePeriodMillis)
         rootJob?.cancel()
+        stopped = true
     }
 }
