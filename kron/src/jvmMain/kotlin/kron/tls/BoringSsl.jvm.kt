@@ -13,15 +13,18 @@ import java.lang.foreign.ValueLayout.JAVA_INT
 import java.lang.foreign.ValueLayout.JAVA_LONG
 import java.lang.foreign.ValueLayout.JAVA_SHORT
 import java.lang.invoke.MethodHandle
+import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 /**
  * The BoringSSL surface TLS needs, through FFM: libssl and libcrypto in one shared object, libkron_boringssl.so, which
- * scripts/build-boringssl.sh links from the same static libraries the native targets embed. It is found through the
- * `kron.boringssl` system property or the KRON_BORINGSSL variable, each a path, and otherwise by name on the loader's
- * search path. Loaded on first use, so a server without TLS never maps it.
+ * scripts/build-boringssl.sh builds from the commit the native targets embed. It is the `kron.boringssl` system
+ * property or the KRON_BORINGSSL variable, each a path; otherwise the copy this jar carries for the machine's
+ * architecture; otherwise found by name on the loader's search path. Loaded on first use, so a server without TLS
+ * never maps it.
  */
 internal actual object BoringSsl {
     actual const val SSL_FILETYPE_PEM = 1
@@ -49,7 +52,7 @@ internal actual object BoringSsl {
     private val linker = Linker.nativeLinker()
 
     private val library: SymbolLookup = run {
-        val path = System.getProperty("kron.boringssl") ?: System.getenv("KRON_BORINGSSL")
+        val path = System.getProperty("kron.boringssl") ?: System.getenv("KRON_BORINGSSL") ?: bundled()
         try {
             if (path != null) SymbolLookup.libraryLookup(Path.of(path), Arena.global())
             else SymbolLookup.libraryLookup("libkron_boringssl.so", Arena.global())
@@ -59,6 +62,21 @@ internal actual object BoringSsl {
                     "KRON_BORINGSSL at it - ${e.message}",
             )
         }
+    }
+
+    // The copy in this jar for the machine's architecture, written out to a file once: a library is mapped from a file.
+    private fun bundled(): String? {
+        val arch = when (System.getProperty("os.arch")) {
+            "amd64", "x86_64" -> "linux-x64"
+            "aarch64" -> "linux-arm64"
+            else -> return null
+        }
+
+        val resource = BoringSsl::class.java.getResourceAsStream("/kron/native/$arch/libkron_boringssl.so") ?: return null
+        val file = Files.createTempFile("libkron_boringssl", ".so")
+        file.toFile().deleteOnExit()
+        resource.use { Files.copy(it, file, StandardCopyOption.REPLACE_EXISTING) }
+        return file.toString()
     }
 
     private fun bind(name: String, descriptor: FunctionDescriptor, vararg options: Linker.Option): MethodHandle =

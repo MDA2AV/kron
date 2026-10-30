@@ -51,6 +51,18 @@ kotlin {
     }
 }
 
+// The JVM jar carries its BoringSSL: native/<arch>/libkron_boringssl.so, at kron/native/<arch>/ inside it.
+val boringsslForJar = tasks.register<Sync>("boringsslForJar") {
+    from(rootProject.file("native")) {
+        include("*/libkron_boringssl.so")
+    }
+    into(layout.buildDirectory.dir("generated/jvmResources/kron/native"))
+}
+
+kotlin.sourceSets.named("jvmMain") {
+    resources.srcDir(boringsslForJar.map { it.destinationDir.parentFile.parentFile })
+}
+
 tasks.named<Test>("jvmTest") {
     jvmArgs("--enable-native-access=ALL-UNNAMED")
     systemProperty("kron.boringssl", rootProject.file("native/linux-x64/libkron_boringssl.so").absolutePath)
