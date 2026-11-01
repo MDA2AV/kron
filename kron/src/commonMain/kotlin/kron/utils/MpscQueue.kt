@@ -22,7 +22,11 @@ internal class MpscQueue<T : Any> {
 
     /** The next item, or null when the queue is empty (or a producer is mid-offer). The consumer only. */
     fun poll(): T? {
-        val next = tail.next.load() ?: return null
+        val taken = tail
+        val next = taken.next.load() ?: return null
+        // Unlinked once passed: on the JVM, a taken node that reached the old generation would otherwise keep every
+        // node after it alive, all of them copied by each young collection and promoted.
+        taken.next.store(null)
         tail = next
 
         val value = next.value
