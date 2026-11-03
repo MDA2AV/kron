@@ -432,9 +432,10 @@ class Reactor(val id: Int, private val config: ServerConfig) {
 
     /**
      * Completes [completion] with -ETIME after [nanoseconds], on this reactor. From another thread the
-     * submission is handed over.
+     * submission is handed over. The callback form of [RingTimer], for a caller with a continuation of its own to
+     * resume, such as a coroutine dispatcher's delay.
      */
-    internal fun submitTimeout(nanoseconds: Long, completion: RingCompletion) {
+    fun submitTimeout(nanoseconds: Long, completion: RingCompletion) {
         if (!onReactorThread) {
             post {
                 submitTimeout(nanoseconds, completion)
@@ -559,6 +560,6 @@ class Reactor(val id: Int, private val config: ServerConfig) {
 }
 
 /** An in-flight ring operation's completion, called on the reactor thread with the CQE's result. */
-internal fun interface RingCompletion {
+fun interface RingCompletion {
     fun complete(result: Int)
 }
