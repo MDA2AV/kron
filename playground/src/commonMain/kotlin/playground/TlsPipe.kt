@@ -1,12 +1,12 @@
 package playground
 
-import kron.IOException
-import kron.KronServer
-import kron.ServerConfig
-import kron.TcpConnection
-import kron.TcpOptions
-import kron.tls.TlsDuplexPipe
-import kron.tls.TlsService
+import kronos.IOException
+import kronos.KronosServer
+import kronos.ServerConfig
+import kronos.TcpConnection
+import kronos.TcpOptions
+import kronos.tls.TlsDuplexPipe
+import kronos.tls.TlsService
 
 /**
  * tls-pipe - tls-raw through the TLS pipe: the same response per request, read through [TlsDuplexPipe]'s reader -
@@ -25,11 +25,11 @@ object TlsPipe {
 
     fun run() {
         val port = Env.port(8443)
-        val reactors = Env.reactors(Env.processors())
+        val proactors = Env.proactors(Env.processors())
         val bodyBytes = Env.body(8 * 1024)   // TLS cost is per byte, so a 2-byte "ok" would hide it
 
         val config = ServerConfig(
-            reactorCount = reactors,
+            proactorCount = proactors,
             ringEntries = 8192,
             recvBufferSize = 32 * 1024,
             recvSlots = 4096,
@@ -44,18 +44,18 @@ object TlsPipe {
 
         val (tlsOptions, setup) = TlsSetup.options("tls-pipe")
 
-        val fill = "kron-tls-pipe-payload ".encodeToByteArray()
+        val fill = "kronos-tls-pipe-payload ".encodeToByteArray()
         val body = ByteArray(bodyBytes) { fill[it % fill.size] }
         val head = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: $bodyBytes\r\n\r\n"
         val response = head.encodeToByteArray() + body
 
-        // One TLS context per reactor, made on its thread when it starts.
-        val services = arrayOfNulls<TlsService>(reactors)
+        // One TLS context per proactor, made on its thread when it starts.
+        val services = arrayOfNulls<TlsService>(proactors)
 
         suspend fun handle(conn: TcpConnection) {
             var pipe: TlsDuplexPipe? = null
             try {
-                val session = services[conn.reactor.id]!!.accept(conn)
+                val session = services[conn.proactor.id]!!.accept(conn)
                 val p = TlsDuplexPipe(conn, session)
                 pipe = p
 
@@ -90,15 +90,15 @@ object TlsPipe {
             }
         }
 
-        val server = KronServer(
+        val server = KronosServer(
             config,
-            onStart = { reactor ->
-                services[reactor.id] = TlsService.start(reactor, tlsOptions)
+            onStart = { proactor ->
+                services[proactor.id] = TlsService.start(proactor, tlsOptions)
             },
             handler = ::handle,
         ).start()
 
-        log("[tls-pipe] $reactors reactors on :$port, $bodyBytes-byte body, $setup")
+        log("[tls-pipe] $proactors proactors on :$port, $bodyBytes-byte body, $setup")
         server.join()
     }
 }

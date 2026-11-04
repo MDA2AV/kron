@@ -1,14 +1,14 @@
 package playground
 
-import kron.IOException
-import kron.KronServer
-import kron.Memory
-import kron.RecvItem
-import kron.ServerConfig
-import kron.TcpConnection
-import kron.TcpOptions
-import kron.tls.TlsService
-import kron.tls.TlsSession
+import kronos.IOException
+import kronos.KronosServer
+import kronos.Memory
+import kronos.RecvItem
+import kronos.ServerConfig
+import kronos.TcpConnection
+import kronos.TcpOptions
+import kronos.tls.TlsService
+import kronos.tls.TlsSession
 
 /**
  * tls-raw - TLS on BoringSSL both ways (or kernel TLS with the knobs), the Kotlin twin of Playground/Tls/OpenSsl: one
@@ -23,10 +23,10 @@ import kron.tls.TlsSession
 object TlsRaw {
     fun run() {
         val port = Env.port(8443)
-        val reactors = Env.reactors(Env.processors())
+        val proactors = Env.proactors(Env.processors())
         val bodyBytes = Env.body(8 * 1024)   // TLS cost is per byte, so a 2-byte "ok" would hide it
         val config = ServerConfig(
-            reactorCount = reactors,
+            proactorCount = proactors,
             ringEntries = 8192,
             recvBufferSize = 32 * 1024,
             recvSlots = 4096,
@@ -41,20 +41,20 @@ object TlsRaw {
 
         val (tlsOptions, setup) = TlsSetup.options("tls-raw")
 
-        val fill = "kron-ktls-payload ".encodeToByteArray()
+        val fill = "kronos-ktls-payload ".encodeToByteArray()
         val body = ByteArray(bodyBytes) { fill[it % fill.size] }
         val head = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: $bodyBytes\r\n\r\n"
         val response = head.encodeToByteArray() + body
 
-        // One TLS context per reactor, made on its thread when it starts.
-        val services = arrayOfNulls<TlsService>(reactors)
+        // One TLS context per proactor, made on its thread when it starts.
+        val services = arrayOfNulls<TlsService>(proactors)
 
         suspend fun handle(conn: TcpConnection) {
             var tls: TlsSession? = null
             val carry = Carry()
             val item = RecvItem()
             try {
-                val session = services[conn.reactor.id]!!.accept(conn)
+                val session = services[conn.proactor.id]!!.accept(conn)
                 tls = session
 
                 // What arrived with the handshake's last flight.
@@ -89,15 +89,15 @@ object TlsRaw {
             }
         }
 
-        val server = KronServer(
+        val server = KronosServer(
             config,
-            onStart = { reactor ->
-                services[reactor.id] = TlsService.start(reactor, tlsOptions)
+            onStart = { proactor ->
+                services[proactor.id] = TlsService.start(proactor, tlsOptions)
             },
             handler = ::handle,
         ).start()
 
-        log("[tls-raw] $reactors reactors on :$port, $bodyBytes-byte body, $setup")
+        log("[tls-raw] $proactors proactors on :$port, $bodyBytes-byte body, $setup")
         server.join()
     }
 

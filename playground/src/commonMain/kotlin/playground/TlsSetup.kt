@@ -1,6 +1,6 @@
 package playground
 
-import kron.tls.TlsOptions
+import kronos.tls.TlsOptions
 
 /**
  * The TLS samples' shared settings: PLAYGROUND_TLS_CERT and PLAYGROUND_TLS_KEY name a PEM certificate and key, and

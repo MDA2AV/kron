@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Build BoringSSL (libssl + libcrypto) as static libraries for kron, with the Kotlin/Native toolchain's own clang
-# and sysroot (glibc 2.19 on x64, 2.25 on arm64), so they link into a kron binary as they are. Output, committed like
+# Build BoringSSL (libssl + libcrypto) as static libraries for kronos, with the Kotlin/Native toolchain's own clang
+# and sysroot (glibc 2.19 on x64, 2.25 on arm64), so they link into a kronos binary as they are. Output, committed like
 # ioxide's .so files: native/linux-<arch>/libssl.a, native/linux-<arch>/libcrypto.a, the same objects linked as
-# native/linux-<arch>/libkron_boringssl.so for the JVM target, and the headers they were built from in
+# native/linux-<arch>/libkronos_boringssl.so for the JVM target, and the headers they were built from in
 # native/include/openssl, the same for both.
 #
 #   scripts/build-boringssl.sh                   # linux-x64, with the pinned ref below
@@ -31,7 +31,7 @@ case "$ARCH" in
         ;;
 esac
 
-WORK=${WORK:-/tmp/kron-boringssl-$ARCH}
+WORK=${WORK:-/tmp/kronos-boringssl-$ARCH}
 OUT=native/linux-$ARCH
 HEADERS=native/include
 
@@ -40,7 +40,7 @@ KONAN=${KONAN_DATA_DIR:-$HOME/.konan}/dependencies
 LLVM=$(ls -d "$KONAN"/llvm-*-x86_64-linux-essentials-* | tail -1)/bin
 GCC=$(ls -d "$KONAN"/$TRIPLE-gcc-*-glibc-* 2>/dev/null | tail -1)
 [ -x "$LLVM/clang" ] && [ -d "$GCC" ] || {
-    echo "no Kotlin/Native toolchain for $TRIPLE under $KONAN: build kron for it once with Gradle first" >&2
+    echo "no Kotlin/Native toolchain for $TRIPLE under $KONAN: build kronos for it once with Gradle first" >&2
     exit 1
 }
 TARGET_FLAGS="--target=$TRIPLE --gcc-toolchain=$GCC --sysroot=$GCC/$TRIPLE/sysroot"
@@ -98,19 +98,19 @@ build_shared() {
     cmake --build "$WORK/build-shared" --target ssl crypto -j"$(nproc)" >"$WORK/build-shared.log"
 
     echo '{ local: _ZSt*; _ZNSt*; _ZNKSt*; _ZTISt*; _ZTSSt*; _ZTVSt*; };' >"$WORK/std-local.map"
-    "$LLVM/clang++" $TARGET_FLAGS -fuse-ld=lld -shared -o "$OUT/libkron_boringssl.so" \
-        -Wl,-soname,libkron_boringssl.so \
+    "$LLVM/clang++" $TARGET_FLAGS -fuse-ld=lld -shared -o "$OUT/libkronos_boringssl.so" \
+        -Wl,-soname,libkronos_boringssl.so \
         -Wl,--whole-archive "$WORK/build-shared/libssl.a" "$WORK/build-shared/libcrypto.a" -Wl,--no-whole-archive \
         -Wl,-Bsymbolic -Wl,--no-undefined -static-libstdc++ -static-libgcc -lpthread \
         -Wl,--exclude-libs,libstdc++.a:libgcc.a:libgcc_eh.a -Wl,--version-script="$WORK/std-local.map"
     # The toolchain ships no nm: the host's reads the dynamic symbols of either architecture.
-    nm -D --defined-only "$OUT/libkron_boringssl.so" | awk '{print $3}' >"$WORK/exports.txt"
+    nm -D --defined-only "$OUT/libkronos_boringssl.so" | awk '{print $3}' >"$WORK/exports.txt"
     for symbol in SSL_CTX_new SSL_CTX_set1_tls13_ciphers SSL_CTX_set_keylog_callback SSL_CTX_set_alpn_select_cb \
         BIO_s_mem PEM_read_bio_PrivateKey ERR_error_string_n HMAC; do
-        grep -qx "$symbol" "$WORK/exports.txt" || { echo "libkron_boringssl.so does not export $symbol" >&2; exit 1; }
+        grep -qx "$symbol" "$WORK/exports.txt" || { echo "libkronos_boringssl.so does not export $symbol" >&2; exit 1; }
     done
 }
-echo "==> building libkron_boringssl.so"
+echo "==> building libkronos_boringssl.so"
 build_shared
 
-echo "==> done: $(du -h "$OUT/libssl.a" | cut -f1) libssl.a, $(du -h "$OUT/libcrypto.a" | cut -f1) libcrypto.a, $(du -h "$OUT/libkron_boringssl.so" | cut -f1) libkron_boringssl.so"
+echo "==> done: $(du -h "$OUT/libssl.a" | cut -f1) libssl.a, $(du -h "$OUT/libcrypto.a" | cut -f1) libcrypto.a, $(du -h "$OUT/libkronos_boringssl.so" | cut -f1) libkronos_boringssl.so"

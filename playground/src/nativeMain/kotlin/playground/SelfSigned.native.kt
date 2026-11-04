@@ -7,40 +7,40 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.usePinned
-import kron.boringssl.ASN1_INTEGER_set
-import kron.boringssl.BIO
-import kron.boringssl.BIO_ctrl_pending
-import kron.boringssl.BIO_free
-import kron.boringssl.BIO_new
-import kron.boringssl.BIO_read
-import kron.boringssl.BIO_s_mem
-import kron.boringssl.EC_KEY_generate_key
-import kron.boringssl.EC_KEY_new_by_curve_name
-import kron.boringssl.EVP_PKEY_assign_EC_KEY
-import kron.boringssl.EVP_PKEY_free
-import kron.boringssl.EVP_PKEY_new
-import kron.boringssl.EVP_sha256
-import kron.boringssl.MBSTRING_ASC
-import kron.boringssl.NID_X9_62_prime256v1
-import kron.boringssl.PEM_write_bio_PrivateKey
-import kron.boringssl.PEM_write_bio_X509
-import kron.boringssl.X509_NAME_add_entry_by_txt
-import kron.boringssl.X509_VERSION_3
-import kron.boringssl.X509_free
-import kron.boringssl.X509_get_serialNumber
-import kron.boringssl.X509_get_subject_name
-import kron.boringssl.X509_getm_notAfter
-import kron.boringssl.X509_getm_notBefore
-import kron.boringssl.X509_gmtime_adj
-import kron.boringssl.X509_new
-import kron.boringssl.X509_set_issuer_name
-import kron.boringssl.X509_set_pubkey
-import kron.boringssl.X509_set_version
-import kron.boringssl.X509_sign
+import kronos.boringssl.ASN1_INTEGER_set
+import kronos.boringssl.BIO
+import kronos.boringssl.BIO_ctrl_pending
+import kronos.boringssl.BIO_free
+import kronos.boringssl.BIO_new
+import kronos.boringssl.BIO_read
+import kronos.boringssl.BIO_s_mem
+import kronos.boringssl.EC_KEY_generate_key
+import kronos.boringssl.EC_KEY_new_by_curve_name
+import kronos.boringssl.EVP_PKEY_assign_EC_KEY
+import kronos.boringssl.EVP_PKEY_free
+import kronos.boringssl.EVP_PKEY_new
+import kronos.boringssl.EVP_sha256
+import kronos.boringssl.MBSTRING_ASC
+import kronos.boringssl.NID_X9_62_prime256v1
+import kronos.boringssl.PEM_write_bio_PrivateKey
+import kronos.boringssl.PEM_write_bio_X509
+import kronos.boringssl.X509_NAME_add_entry_by_txt
+import kronos.boringssl.X509_VERSION_3
+import kronos.boringssl.X509_free
+import kronos.boringssl.X509_get_serialNumber
+import kronos.boringssl.X509_get_subject_name
+import kronos.boringssl.X509_getm_notAfter
+import kronos.boringssl.X509_getm_notBefore
+import kronos.boringssl.X509_gmtime_adj
+import kronos.boringssl.X509_new
+import kronos.boringssl.X509_set_issuer_name
+import kronos.boringssl.X509_set_pubkey
+import kronos.boringssl.X509_set_version
+import kronos.boringssl.X509_sign
 
 /**
  * A throwaway certificate for the TLS sample when none is configured: an EC P-256 key and a self-signed certificate
- * for localhost, valid for a year, made with the BoringSSL kron links. Clients have to skip verification
+ * for localhost, valid for a year, made with the BoringSSL kronos links. Clients have to skip verification
  * (`curl -k`).
  */
 actual object SelfSigned {

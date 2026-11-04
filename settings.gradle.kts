@@ -17,6 +17,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "kron"
+rootProject.name = "kronos"
 
-include("kron", "glyph11", "playground")
+include("kronos", "glyph11", "playground")

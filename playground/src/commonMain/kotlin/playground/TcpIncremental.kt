@@ -1,11 +1,11 @@
 package playground
 
-import kron.IncrementalOptions
-import kron.KronServer
-import kron.RecvItem
-import kron.ServerConfig
-import kron.TcpConnection
-import kron.TcpOptions
+import kronos.IncrementalOptions
+import kronos.KronosServer
+import kronos.RecvItem
+import kronos.ServerConfig
+import kronos.TcpConnection
+import kronos.TcpOptions
 
 /**
  * incremental - tcp-raw with one thing changed, the buffer-ring mode: the Kotlin twin of Playground/Tcp/Incremental.
@@ -24,23 +24,23 @@ import kron.TcpOptions
 object TcpIncremental {
     fun run() {
         val port = Env.port(8080)
-        val reactors = Env.reactors(12)
+        val proactors = Env.proactors(12)
         val bodyBytes = Env.body(2)
 
         // The per-connection ring - this block is the mode. Each connection gets incRecvSlots buffers of
-        // incRecvBufferSize bytes, so a reactor holds at most incMaxConnections x incRecvSlots x incRecvBufferSize.
-        val incMaxConnections = Env.int("PLAYGROUND_INC_CONNS", 4096)     // per reactor; accepts past it are shed
+        // incRecvBufferSize bytes, so a proactor holds at most incMaxConnections x incRecvSlots x incRecvBufferSize.
+        val incMaxConnections = Env.int("PLAYGROUND_INC_CONNS", 4096)     // per proactor; accepts past it are shed
         val incRecvSlots = Env.int("PLAYGROUND_INC_SLOTS", 16)            // per connection, a power of two
         val incRecvBufferSize = Env.int("PLAYGROUND_INC_BUFSIZE", 4096)   // bytes per buffer, filled across recvs
 
         val config = ServerConfig(
-            reactorCount = reactors,       // io_uring rings/threads - one per core
+            proactorCount = proactors,       // io_uring rings/threads - one per core
             ringEntries = 8192,            // SQ depth per ring (the CQ is twice that)
             tcp = TcpOptions(
                 port = port,
                 listenBacklog = 1024,      // accept-queue depth per SO_REUSEPORT listener
                 writeSlabSize = 16 * 1024, // per-connection write buffer; doubles when outgrown
-                poolMax = 1024,            // pooled connection objects kept per reactor
+                poolMax = 1024,            // pooled connection objects kept per proactor
                 recvQueueEntries = 64,     // per-connection recv completion queue depth
                 readTimeoutMs = 60_000,    // close a connection whose read waits this long on a silent peer; 0 = off
                 sendTimeoutMs = 60_000,    // close a connection whose flush takes this long to go out; 0 = off
@@ -84,8 +84,8 @@ object TcpIncremental {
             }
         }
 
-        val server = KronServer(config, handler = ::handle).start()
-        log("[incremental] $reactors reactors on :$port, ${incRecvSlots}x$incRecvBufferSize B per connection (Linux 6.12+)")
+        val server = KronosServer(config, handler = ::handle).start()
+        log("[incremental] $proactors proactors on :$port, ${incRecvSlots}x$incRecvBufferSize B per connection (Linux 6.12+)")
         server.join()
     }
 }

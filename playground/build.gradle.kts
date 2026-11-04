@@ -12,7 +12,7 @@ kotlin {
     }
 
     // The same samples on the JVM: playground-jvm-all.jar, run as
-    //   java --enable-native-access=ALL-UNNAMED -Dkron.boringssl=native/linux-x64/libkron_boringssl.so \
+    //   java --enable-native-access=ALL-UNNAMED -Dkronos.boringssl=native/linux-x64/libkronos_boringssl.so \
     //       -jar playground/build/libs/playground-jvm-all.jar tcp-raw
     jvm()
     jvmToolchain(25)
@@ -26,7 +26,7 @@ kotlin {
             languageSettings.optIn("kotlinx.cinterop.ExperimentalForeignApi")
         }
         commonMain.dependencies {
-            implementation(project(":kron"))
+            implementation(project(":kronos"))
         }
     }
 }
