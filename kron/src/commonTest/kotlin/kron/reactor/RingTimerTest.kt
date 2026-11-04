@@ -1,6 +1,8 @@
 package kron
 
 import kotlin.concurrent.atomics.AtomicReference
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -59,5 +61,36 @@ class RingTimerTest {
         }
 
         assertEquals(List(5) { "ETIME" }, notes)
+    }
+
+    @Test
+    fun `submitTimeout calls back on the reactor thread with ETIME - never sooner than asked`() {
+        val recorded = AtomicReference<String?>(null)
+
+        val handler: suspend (TcpConnection) -> Unit = { conn ->
+            val reactor = conn.reactor
+            val mark = TimeSource.Monotonic.markNow()
+            val note = suspendCoroutine { cont ->
+                reactor.submitTimeout(200_000) { result ->
+                    val waited = mark.elapsedNow().inWholeNanoseconds
+                    cont.resume(
+                        "result ${if (result == RingTimer.ETIME) "ETIME" else "$result"}, " +
+                            "on the reactor: ${reactor.onReactorThread}, at least 200 us: ${waited >= 200_000}"
+                    )
+                }
+            }
+
+            recorded.store(note)
+            conn.write("done".encodeToByteArray())
+            conn.flush()
+        }
+
+        TestServer(testConfig(), handler).use { server ->
+            server.connect(receiveTimeoutMs = 10_000).use { client ->
+                assertEquals("done", client.readBytes(4).decodeToString(), "the timeout never called back")
+            }
+        }
+
+        assertEquals("result ETIME, on the reactor: true, at least 200 us: true", recorded.load())
     }
 }
