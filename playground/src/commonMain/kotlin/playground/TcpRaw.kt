@@ -1,13 +1,13 @@
 package playground
 
-import kron.KronServer
-import kron.RecvItem
-import kron.ServerConfig
-import kron.TcpConnection
-import kron.TcpOptions
+import kronos.KronosServer
+import kronos.RecvItem
+import kronos.ServerConfig
+import kronos.TcpConnection
+import kronos.TcpOptions
 
 /**
- * raw - a complete kron server in one file, the Kotlin twin of Playground/Tcp/Raw: one pre-encoded response
+ * raw - a complete kronos server in one file, the Kotlin twin of Playground/Tcp/Raw: one pre-encoded response
  * per read, no parsing, so it is the throughput baseline the other samples are read against.
  *
  *     ./gradlew :playground:linkReleaseExecutableLinuxX64
@@ -17,12 +17,12 @@ import kron.TcpOptions
 object TcpRaw {
     fun run() {
         val port = Env.port(8080)
-        val reactors = Env.reactors(12)
+        val proactors = Env.proactors(12)
         val bodyBytes = Env.body(2)
 
         // Every knob at its default, so the whole tuning surface is visible in one place.
         val config = ServerConfig(
-            reactorCount = reactors,       // io_uring rings/threads - one per core
+            proactorCount = proactors,       // io_uring rings/threads - one per core
             ringEntries = 8192,            // SQ depth per ring (the CQ is twice that)
             recvBufferSize = 32 * 1024,    // bytes per shared recv buffer
             recvSlots = 4096,              // shared recv buffer-ring depth
@@ -30,7 +30,7 @@ object TcpRaw {
                 port = port,
                 listenBacklog = 1024,      // accept-queue depth per SO_REUSEPORT listener
                 writeSlabSize = 16 * 1024, // per-connection write buffer; doubles when outgrown
-                poolMax = 1024,            // pooled connection objects kept per reactor
+                poolMax = 1024,            // pooled connection objects kept per proactor
                 recvQueueEntries = 64,     // per-connection recv completion queue depth
                 readTimeoutMs = 60_000,    // close a connection whose read waits this long on a silent peer; 0 = off
                 sendTimeoutMs = 60_000,    // close a connection whose flush takes this long to go out; 0 = off
@@ -46,7 +46,7 @@ object TcpRaw {
         val response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ${body.size}\r\n\r\n"
             .encodeToByteArray() + body
 
-        // The handler. It runs on the reactor thread and every suspension resumes right back on it.
+        // The handler. It runs on the proactor thread and every suspension resumes right back on it.
         suspend fun handle(conn: TcpConnection) {
             val item = RecvItem()
 
@@ -54,7 +54,7 @@ object TcpRaw {
                 // io_uring recv. The continuation resumes inline on this thread - no thread pool.
                 val snapshot = conn.read()
 
-                // kron hands you raw bytes and stays out of HTTP: this sample returns every buffer unread.
+                // kronos hands you raw bytes and stays out of HTTP: this sample returns every buffer unread.
                 while (conn.tryGetItem(snapshot, item)) {
                     conn.returnBuffer(item)
                 }
@@ -69,8 +69,8 @@ object TcpRaw {
             }
         }
 
-        val server = KronServer(config, handler = ::handle).start()
-        log("[raw] $reactors reactors on :$port, $bodyBytes-byte body")
+        val server = KronosServer(config, handler = ::handle).start()
+        log("[raw] $proactors proactors on :$port, $bodyBytes-byte body")
         server.join()
     }
 }

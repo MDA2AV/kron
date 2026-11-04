@@ -1,24 +1,24 @@
 package playground
 
-import kron.KronServer
-import kron.ServerConfig
-import kron.TcpConnection
-import kron.TcpDuplexPipe
-import kron.TcpOptions
+import kronos.KronosServer
+import kronos.ServerConfig
+import kronos.TcpConnection
+import kronos.TcpDuplexPipe
+import kronos.TcpOptions
 
 /**
  * pipe - Tcp/Raw through the pipe adapters, the Kotlin twin of Playground/Tcp/Pipe: the same response per read,
- * reading through [kron.TcpPipeReader] and writing through [kron.TcpPipeWriter], so the pair of samples
+ * reading through [kronos.TcpPipeReader] and writing through [kronos.TcpPipeWriter], so the pair of samples
  * measures what the adapters cost.
  */
 object TcpPipe {
     fun run() {
         val port = Env.port(8080)
-        val reactors = Env.reactors(Env.processors())
+        val proactors = Env.proactors(Env.processors())
         val bodyBytes = Env.body(2)
 
         val config = ServerConfig(
-            reactorCount = reactors,
+            proactorCount = proactors,
             ringEntries = 8192,
             recvBufferSize = 32 * 1024,
             recvSlots = 4096,
@@ -61,8 +61,8 @@ object TcpPipe {
             }
         }
 
-        val server = KronServer(config, handler = ::handle).start()
-        log("[pipe] $reactors reactors on :$port, $bodyBytes-byte body")
+        val server = KronosServer(config, handler = ::handle).start()
+        log("[pipe] $proactors proactors on :$port, $bodyBytes-byte body")
         server.join()
     }
 }

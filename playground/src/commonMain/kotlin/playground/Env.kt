@@ -12,7 +12,7 @@ object Env {
 
     fun port(fallback: Int): Int = int("PLAYGROUND_PORT", fallback)
 
-    fun reactors(fallback: Int): Int = int("PLAYGROUND_REACTORS", fallback)
+    fun proactors(fallback: Int): Int = int("PLAYGROUND_PROACTORS", fallback)
 
     fun body(fallback: Int): Int = int("PLAYGROUND_BODY", fallback)
 

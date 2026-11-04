@@ -1,11 +1,11 @@
 package playground
 
-import kron.KronServer
-import kron.Memory
-import kron.RecvItem
-import kron.ServerConfig
-import kron.TcpConnection
-import kron.TcpOptions
+import kronos.KronosServer
+import kronos.Memory
+import kronos.RecvItem
+import kronos.ServerConfig
+import kronos.TcpConnection
+import kronos.TcpOptions
 
 /**
  * count - Tcp/Raw answering once per request instead of once per read: a request is anything ending in
@@ -16,10 +16,10 @@ import kron.TcpOptions
 object TcpCount {
     fun run() {
         val port = Env.port(8080)
-        val reactors = Env.reactors(Env.processors())
+        val proactors = Env.proactors(Env.processors())
 
         val config = ServerConfig(
-            reactorCount = reactors,
+            proactorCount = proactors,
             ringEntries = 8192,
             recvBufferSize = 32 * 1024,
             recvSlots = 4096,
@@ -74,8 +74,8 @@ object TcpCount {
             }
         }
 
-        val server = KronServer(config, handler = ::handle).start()
-        log("[count] $reactors reactors on :$port")
+        val server = KronosServer(config, handler = ::handle).start()
+        log("[count] $proactors proactors on :$port")
         server.join()
     }
 }

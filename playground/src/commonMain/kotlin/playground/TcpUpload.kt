@@ -1,12 +1,12 @@
 package playground
 
-import kron.IncrementalOptions
-import kron.KronServer
-import kron.RingTimer
-import kron.ServerConfig
-import kron.TcpConnection
-import kron.TcpDuplexPipe
-import kron.TcpOptions
+import kronos.IncrementalOptions
+import kronos.KronosServer
+import kronos.RingTimer
+import kronos.ServerConfig
+import kronos.TcpConnection
+import kronos.TcpDuplexPipe
+import kronos.TcpOptions
 import kotlin.time.TimeSource
 
 /**
@@ -30,11 +30,11 @@ object TcpUpload {
 
     fun run() {
         val port = Env.port(8080)
-        val reactors = Env.reactors(12)
+        val proactors = Env.proactors(12)
         val delayMs = Env.int("PLAYGROUND_UPLOAD_DELAY_MS", 0).toLong()
 
         val config = ServerConfig(
-            reactorCount = reactors,
+            proactorCount = proactors,
             ringEntries = 8192,
             tcp = TcpOptions(
                 port = port,
@@ -54,7 +54,7 @@ object TcpUpload {
 
         suspend fun handle(conn: TcpConnection) {
             val pipe = TcpDuplexPipe(conn)
-            val timer = RingTimer(conn.reactor)
+            val timer = RingTimer(conn.proactor)
 
             try {
                 while (true) {
@@ -98,8 +98,8 @@ object TcpUpload {
             }
         }
 
-        val server = KronServer(config, handler = ::handle).start()
-        log("[upload] $reactors reactors on :$port, reader pause ${delayMs} ms per chunk (Linux 6.12+)")
+        val server = KronosServer(config, handler = ::handle).start()
+        log("[upload] $proactors proactors on :$port, reader pause ${delayMs} ms per chunk (Linux 6.12+)")
         server.join()
     }
 

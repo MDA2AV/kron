@@ -1,0 +1,4 @@
+package = kronos.sys
+headers = kronos_sys.h
+headerFilter = kronos_sys.h linux/io_uring.h linux/io_uring/**
+compilerOpts = -D_GNU_SOURCE

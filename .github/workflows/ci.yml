@@ -29,18 +29,18 @@ jobs:
       - name: Build the tests and the playground, linuxX64 and linuxArm64
         run: >-
           ./gradlew --no-daemon
-          :kron:linkDebugTestLinuxX64 :kron:linkDebugTestLinuxArm64
+          :kronos:linkDebugTestLinuxX64 :kronos:linkDebugTestLinuxArm64
           :glyph11:linkDebugTestLinuxX64 :glyph11:linkDebugTestLinuxArm64
           :playground:linkReleaseExecutableLinuxX64 :playground:linkReleaseExecutableLinuxArm64
 
-      - name: kron's and glyph11's tests on the JVM, and the playground's jar
-        run: ./gradlew --no-daemon :kron:jvmTest :glyph11:jvmTest :playground:jvmFatJar
+      - name: kronos' and glyph11's tests on the JVM, and the playground's jar
+        run: ./gradlew --no-daemon :kronos:jvmTest :glyph11:jvmTest :playground:jvmFatJar
 
       - uses: actions/upload-artifact@v4
         with:
           name: tests
           path: |
-            kron/build/bin/*/debugTest/test.kexe
+            kronos/build/bin/*/debugTest/test.kexe
             glyph11/build/bin/*/debugTest/test.kexe
           retention-days: 7
 
@@ -68,10 +68,10 @@ jobs:
           echo "io_uring_disabled: $(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo n/a)"
 
       # One step per module, each run even when an earlier one failed.
-      - name: kron tests on ${{ matrix.target }}
+      - name: kronos tests on ${{ matrix.target }}
         run: |
-          chmod +x kron/build/bin/${{ matrix.target }}/debugTest/test.kexe
-          ./kron/build/bin/${{ matrix.target }}/debugTest/test.kexe
+          chmod +x kronos/build/bin/${{ matrix.target }}/debugTest/test.kexe
+          ./kronos/build/bin/${{ matrix.target }}/debugTest/test.kexe
 
       - name: glyph11 tests on ${{ matrix.target }}
         if: success() || failure()
