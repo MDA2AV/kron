@@ -24,5 +24,5 @@ class MpscQueueGcTest {
     private fun field(owner: Any, name: String): Any? =
         owner.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(owner)
 
-    private fun next(node: Any): Any? = field(node, "next")!!.let { it.javaClass.getMethod("get").invoke(it) }
+    private fun next(node: Any): Any? = field(node, "next")
 }
