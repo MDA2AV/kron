@@ -81,15 +81,25 @@ class TestSocket : AutoCloseable {
     }
 
     /** A read that waits longer than this fails with EAGAIN (11). */
-    fun setReceiveTimeout(milliseconds: Int) {
+    fun setReceiveTimeout(milliseconds: Int) = setTimeout(SO_RCVTIMEO, milliseconds)
+
+    /** A write that waits longer than this fails with EAGAIN (11). */
+    fun setSendTimeout(milliseconds: Int) = setTimeout(SO_SNDTIMEO, milliseconds)
+
+    private fun setTimeout(option: Int, milliseconds: Int) {
         val tv = Native.malloc(TIMEVAL_SIZE)
         try {
             putLong(tv, (milliseconds / 1000).toLong())
             putLong(tv + 8, (milliseconds % 1000 * 1000).toLong())
-            Native.setsockopt(fd, Sockets.SOL_SOCKET, SO_RCVTIMEO, tv, TIMEVAL_SIZE.toInt())
+            Native.setsockopt(fd, Sockets.SOL_SOCKET, option, tv, TIMEVAL_SIZE.toInt())
         } finally {
             Native.free(tv)
         }
+    }
+
+    /** Every write leaves as the test cut it, not coalesced behind an unacknowledged one. */
+    fun setNoDelay() {
+        Sockets.setInt(fd, Sockets.IPPROTO_TCP, Sockets.TCP_NODELAY, 1)
     }
 
     /** The kernel's receive buffer, before [connect]: small, so a peer's send backs up soon. */
@@ -224,6 +234,7 @@ class TestSocket : AutoCloseable {
         const val SOCKADDR_IN_SIZE = 16L
         const val TIMEVAL_SIZE = 16L
         const val SO_RCVTIMEO = 20
+        const val SO_SNDTIMEO = 21
         const val EINTR = 4
     }
 }
