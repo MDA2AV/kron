@@ -235,18 +235,20 @@ class TcpConnection internal constructor(
         releaseParkedFlush()
     }
 
-    // Recycle: hands back the buffers still queued - shared ones; a connection's own ring is reset whole.
+    // Hands back the buffers still queued, for a handler that won't read them, the way a handler returns them.
     internal fun drainRecv(scratch: RecvItem) {
         while (recv.tryDequeue(scratch)) {
-            if (scratch.hasBuffer && ring == null) {
-                tcp.returnBufferDirect(scratch.bufferId)
-            }
+            returnBuffer(scratch)
         }
     }
 
+    /** Recv completions queued and not taken yet. */
+    internal val queuedRecvs: Int get() = recv.countUntil(recv.snapshotTail())
+
     /**
      * The adapter holding buffers taken out of the queue, if any: recycle asks it to give them back, so a
-     * buffer stranded by a handler that returned early does not depend on the handler remembering.
+     * buffer stranded by a handler that returned early does not depend on the handler remembering. The proactor
+     * asks sooner when the handler has let go and a recv needs the buffers.
      */
     internal var bufferHolder: RecvBufferHolder? = null
 
@@ -489,7 +491,8 @@ class TcpConnection internal constructor(
     /**
      * The handler's release, once per life - the proactor makes it when the handler returns, so calling it is
      * only for letting go earlier. A peer still connected gets a FIN; the read side stays open until the peer
-     * closes, bounded by [TcpOptions.readTimeoutMs].
+     * closes, bounded by [TcpOptions.readTimeoutMs]. Nobody reads that side from here on: what is queued and what a
+     * reader holds can go back to the kernel at any point, so a handler that goes on must leave them alone.
      */
     fun decRef() {
         if (!tcp.proactor.onProactorThread) {
@@ -662,8 +665,9 @@ class TcpConnection internal constructor(
 }
 
 /**
- * An adapter that takes buffers out of a connection's queue and holds them past one read (a pipe reader):
- * recycle asks it to hand them back.
+ * An adapter that takes buffers out of a connection's queue and holds them past one read (a pipe reader): recycle
+ * asks it to hand them back, and so can the proactor before that, once the handler has let go. It can be asked more
+ * than once, and each buffer goes back only once.
  */
 internal interface RecvBufferHolder {
     fun releaseHeldBuffers()

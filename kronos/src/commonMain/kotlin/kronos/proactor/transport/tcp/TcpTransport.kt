@@ -394,8 +394,7 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
             // The group ran dry, not a peer error: the multishot ended, so park the connection until buffers
             // come back.
             if (conn != null) {
-                conn.readParkedMs = proactor.nowMs   // the peer sent; the wait is ours, so the clock restarts
-                recvStarved.add((gen.toLong() shl 32) or (fd.toLong() and 0xFFFF_FFFFL))
+                parkStarvedRecv(conn, fd, gen)
             }
 
             return
@@ -442,8 +441,7 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
             // buffers. Only this connection waits - its bytes stay in the kernel and TCP slows its peer - until a
             // buffer comes back and the loop re-arms the recv.
             if (conn != null) {
-                conn.readParkedMs = proactor.nowMs   // the peer sent; the wait is ours, so the clock restarts
-                recvStarved.add((gen.toLong() shl 32) or (fd.toLong() and 0xFFFF_FFFFL))
+                parkStarvedRecv(conn, fd, gen)
             }
 
             return
@@ -471,6 +469,22 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
         if (flags and IoUring.CQE_F_MORE == 0) {
             submitRecv(fd, gen, ring.bgid)
         }
+    }
+
+    private fun parkStarvedRecv(conn: TcpConnection, fd: Int, gen: Int) {
+        conn.readParkedMs = proactor.nowMs   // the peer sent; the wait is ours, so the clock restarts
+        if (conn.handlerReleased) {
+            returnReleasedBuffers(conn)
+        }
+        recvStarved.add((gen.toLong() shl 32) or (fd.toLong() and 0xFFFF_FFFFL))
+    }
+
+    // Nobody will read a connection its handler let go, and its recv needs a buffer to reach the peer's close, which
+    // is what tears it down. So what it holds goes back.
+    private fun returnReleasedBuffers(conn: TcpConnection) {
+        // Not claimed the way recycle claims it: a read left parked can still take more, for recycle to ask back.
+        conn.bufferHolder?.releaseHeldBuffers()
+        conn.drainRecv(scratchItem)
     }
 
     // Once per loop pass, and only when a buffer came back since the last one, so a parked connection
@@ -603,9 +617,16 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
 
         val now = Clock.monotonicMs()
         val conns = connections
+        val starved = recvStarved.isNotEmpty()
 
         for (fd in conns.indices) {
             val conn = conns[fd] ?: continue
+
+            // A recv is waiting for a buffer, maybe its own, and this connection holds some for nobody.
+            if (starved && conn.handlerReleased) {
+                returnReleasedBuffers(conn)
+            }
+
             if (conn.sweepClosed) {
                 continue
             }
@@ -632,11 +653,25 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
                 }
             }
         }
+
+        // A condemned connection whose recv is parked has no completion coming for its shutdown to end.
+        var i = recvStarved.size - 1
+        while (i >= 0) {
+            val parked = recvStarved[i]
+            val fd = parked.toInt()
+            val conn = connAt(fd, (parked ushr 32).toInt())
+            if (conn != null && conn.sweepClosed) {
+                recvStarved.removeAt(i)
+                closeFromRecv(conn, fd)
+            }
+            i--
+        }
     }
 
     // shutdown() is what the peer sees, and also what releases the connection: it ends the recv a silent
     // peer never completes, or the send a stalled one holds, and those completions run the teardown that
-    // gets the refcount right once the kernel is done with the slab. markClosed wakes a parked read now.
+    // gets the refcount right once the kernel is done with the slab. markClosed wakes a parked read now. A recv
+    // parked on -ENOBUFS has no completion to wait for, so [sweep] runs that teardown itself.
     private fun sweepClose(conn: TcpConnection) {
         conn.sweepClosed = true
         conn.suppressFin()   // this shutdown is the FIN

@@ -51,7 +51,7 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
     private val lostToOverflow: Boolean get() = connectionClosed && connection.recvOverflowed
 
     init {
-        // So the proactor can reclaim at recycle what this reader dequeued and never gave back.
+        // So the proactor can reclaim what this reader dequeued and never gave back.
         connection.bufferHolder = this
     }
 
@@ -220,10 +220,10 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
     }
 
     /**
-     * Hands every held buffer back and forgets the chain. Called by [complete], and by the proactor at recycle
-     * for a reader its handler never completed. Idempotent: once the chain is empty it does nothing, so
-     * complete-then-recycle returns each buffer once. Terminal, so a reader kept past its handler fails instead
-     * of reading the recycled connection's next tenant.
+     * Hands every held buffer back and forgets the chain. Called by [complete], and by the proactor for a reader
+     * its handler never completed: at recycle, or sooner once the handler has let go and a recv needs the buffers.
+     * Idempotent: once the chain is empty it does nothing, so complete-then-recycle returns each buffer once.
+     * Terminal, so a reader kept past its handler fails instead of reading the recycled connection's next tenant.
      */
     override fun releaseHeldBuffers() {
         completed = true
