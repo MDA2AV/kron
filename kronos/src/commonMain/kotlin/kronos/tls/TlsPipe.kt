@@ -50,6 +50,9 @@ class TlsDuplexPipe(
         TlsEncryptingPipeWriter(connection, session)
     }
 
+    /** Whether [connection] still serves the client this pipe was made for, for both halves: [PipeReader.isValid]. */
+    fun isValid(): Boolean = input.isValid()
+
     /** Completes both halves and, when it owns the session, closes it: close_notify, then the session freed. */
     fun close() {
         input.complete()
@@ -106,7 +109,7 @@ class TlsDecryptingPipeReader(
     // The connection's life this reader was made for; a recycle gives the pooled object the next client's.
     private val generation = connection.generation
 
-    override val isCurrent: Boolean get() = connection.generation == generation
+    override fun isValid(): Boolean = connection.generation == generation
 
     init {
         check(connection.proactor.onProactorThread) { "Make a TLS pipe on its connection's proactor thread." }
@@ -400,7 +403,7 @@ class TlsEncryptingPipeWriter(
     // The connection's life this writer was made for; a recycle gives the pooled object the next client's.
     private val generation = connection.generation
 
-    override val isCurrent: Boolean get() = connection.generation == generation
+    override fun isValid(): Boolean = connection.generation == generation
 
     override fun getBuffer(sizeHint: Int): Long {
         checkWritable()

@@ -8,14 +8,17 @@ import kotlin.concurrent.atomics.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/** PipeIsCurrentTest through TLS: the decrypting reader, and the writer, encrypting or the kernel's (#23). */
-class TlsPipeIsCurrentTest {
+/** PipeIsValidTest through TLS: the decrypting reader, and the writer, encrypting or the kernel's (#23). */
+class TlsPipeIsValidTest {
     private val request = "GET / HTTP/1.1\r\nHost: x\r\n\r\n".encodeToByteArray()
     private val response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".encodeToByteArray()
     private val options = TlsOptions(certificatePath = TestCertificate.certificate, keyPath = TestCertificate.key)
 
+    // The pipe's answer, then each half's.
+    private fun validity(pipe: TlsDuplexPipe) = "${pipe.isValid()} ${pipe.input.isValid()} ${pipe.output.isValid()}"
+
     @Test
-    fun `a kept TLS pipe is not current once the pooled connection serves the next client`() {
+    fun `a kept TLS pipe is not valid once the pooled connection serves the next client`() {
         // One proactor: the handlers run one after another on its thread.
         val firstConn = AtomicReference<TcpConnection?>(null)
         val kept = AtomicReference<TlsDuplexPipe?>(null)
@@ -32,9 +35,9 @@ class TlsPipeIsCurrentTest {
                 } else {
                     // The kept pipe was closed, its session freed: asking reads the connection, nothing else.
                     see("same object: ${conn === firstConn.load()}")
-                    see("kept: ${old.input.isCurrent} ${old.output.isCurrent}")
+                    see("kept: ${validity(old)}")
                 }
-                see("own: ${pipe.input.isCurrent} ${pipe.output.isCurrent}")
+                see("own: ${validity(pipe)}")
 
                 val read = pipe.input.read()
                 pipe.input.advanceTo(read.buffer.length)
@@ -65,6 +68,9 @@ class TlsPipeIsCurrentTest {
             }
         }
 
-        assertEquals(listOf("own: true true", "same object: true", "kept: false false", "own: true true"), seen.load())
+        assertEquals(
+            listOf("own: true true true", "same object: true", "kept: false false false", "own: true true true"),
+            seen.load(),
+        )
     }
 }

@@ -496,7 +496,7 @@ class TcpConnection internal constructor(
      *
      * Connections are pooled: once the proactor lets go too, this object is the next client's connection, and a
      * reference kept past that reads and writes that client's data, unchecked. A pipe says whether it still serves
-     * its own client: [PipeReader.isCurrent], [PipeWriter.isCurrent].
+     * its own client: isValid() on [TcpDuplexPipe], [kronos.tls.TlsDuplexPipe] and each of their halves.
      */
     fun decRef() {
         if (!tcp.proactor.onProactorThread) {

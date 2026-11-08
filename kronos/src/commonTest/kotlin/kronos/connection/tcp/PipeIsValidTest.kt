@@ -7,11 +7,14 @@ import kotlin.test.assertTrue
 
 /**
  * Connections are pooled, so a pipe kept past its handler can sit on a connection that serves the next client by
- * now, and nothing stops it from being used (#23). isCurrent is how whoever kept it tells.
+ * now, and nothing stops it from being used (#23). isValid() is how whoever kept it tells.
  */
-class PipeIsCurrentTest {
+class PipeIsValidTest {
+    // The pipe's answer, then each half's.
+    private fun validity(pipe: TcpDuplexPipe) = "${pipe.isValid()} ${pipe.input.isValid()} ${pipe.output.isValid()}"
+
     @Test
-    fun `a kept pipe is current until its client is gone and the pooled connection serves the next one`() {
+    fun `a kept pipe is valid until its client is gone and the pooled connection serves the next one`() {
         // One proactor: the handlers and the posted check run one after another on its thread.
         val firstConn = AtomicReference<TcpConnection?>(null)
         val kept = AtomicReference<TcpDuplexPipe?>(null)
@@ -26,9 +29,9 @@ class PipeIsCurrentTest {
                 kept.store(pipe)
             } else {
                 see("same object: ${conn === firstConn.load()}")
-                see("kept: ${old.input.isCurrent} ${old.output.isCurrent}")
+                see("kept: ${validity(old)}")
             }
-            see("own: ${pipe.input.isCurrent} ${pipe.output.isCurrent}")
+            see("own: ${validity(pipe)}")
 
             pipe.output.write("ok".encodeToByteArray())
             pipe.output.flush()
@@ -41,8 +44,7 @@ class PipeIsCurrentTest {
                 // Still its client's connection: the handler is gone, the client isn't.
                 val checked = Latch(1)
                 server.proactor.post {
-                    val pipe = kept.load()!!
-                    see("handler gone: ${pipe.input.isCurrent} ${pipe.output.isCurrent}")
+                    see("handler gone: ${validity(kept.load()!!)}")
                     checked.countDown()
                 }
                 assertTrue(checked.await(5_000), "the posted check never ran")
@@ -58,11 +60,11 @@ class PipeIsCurrentTest {
 
         assertEquals(
             listOf(
-                "own: true true",
-                "handler gone: true true",
+                "own: true true true",
+                "handler gone: true true true",
                 "same object: true",
-                "kept: false false",
-                "own: true true",
+                "kept: false false false",
+                "own: true true true",
             ),
             seen.load(),
         )

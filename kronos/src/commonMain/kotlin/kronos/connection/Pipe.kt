@@ -29,11 +29,11 @@ interface PipeReader {
     fun complete()
 
     /**
-     * True while the connection under this reader still serves the client it was made for. Connections are pooled:
+     * Whether the connection under this reader still serves the client it was made for. Connections are pooled:
      * once that client is gone the object is reset and handed to the next one, and this turns false. Nothing checks
      * it for you: a reader kept past its handler asks before reading, on the proactor thread, where the recycle runs.
      */
-    val isCurrent: Boolean
+    fun isValid(): Boolean
 }
 
 /**
@@ -60,12 +60,12 @@ interface PipeWriter {
     fun complete()
 
     /**
-     * True while the connection under this writer still serves the client it was made for. Connections are pooled:
+     * Whether the connection under this writer still serves the client it was made for. Connections are pooled:
      * once that client is gone the object is reset and handed to the next one, this turns false, and what the writer
      * writes from then on goes to that next client. Nothing checks it for you: a writer kept past its handler asks
      * before writing, on the proactor thread, where the recycle runs, so nothing comes between the check and the write.
      */
-    val isCurrent: Boolean
+    fun isValid(): Boolean
 }
 
 /** A [PipeReader.read]'s outcome: the buffer, and whether the peer is gone. Reused by its reader. */
