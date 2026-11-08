@@ -26,8 +26,10 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
         listenFds = IntArray(ports.size) { -1 }
         listenPorts = ports.copyOf()
 
+        // The send timeout in the kernel too, for the streams no flush blocks on: see TcpOptions.sendTimeoutMs.
+        val userTimeoutMs = options.sendTimeoutMs.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
         for (i in ports.indices) {
-            listenFds[i] = Sockets.listen(ports[i], options.listenBacklog)
+            listenFds[i] = Sockets.listen(ports[i], options.listenBacklog, userTimeoutMs = userTimeoutMs)
             if (ports[i] == 0) {
                 listenPorts[i] = Sockets.localPort(listenFds[i])
             }

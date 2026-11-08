@@ -15,6 +15,7 @@ internal object Sockets {
     const val SO_REUSEPORT = 15
     const val IPPROTO_TCP = 6
     const val TCP_NODELAY = 1
+    const val TCP_USER_TIMEOUT = 18
     const val SHUT_RD = 0
     const val SHUT_WR = 1
     const val SHUT_RDWR = 2
@@ -38,9 +39,9 @@ internal object Sockets {
     /**
      * A listening IPv4 TCP socket on 0.0.0.0:[port] (0 picks one; see [localPort]). SO_REUSEPORT lets every
      * proactor bind its own listener on the same port, the kernel spreading connections across them; accepted
-     * sockets inherit TCP_NODELAY from it.
+     * sockets inherit TCP_NODELAY from it, and TCP_USER_TIMEOUT when [userTimeoutMs] is above 0.
      */
-    fun listen(port: Int, backlog: Int, reusePort: Boolean = true): Int {
+    fun listen(port: Int, backlog: Int, reusePort: Boolean = true, userTimeoutMs: Int = 0): Int {
         val fd = Native.socket(AF_INET, SOCK_STREAM or SOCK_CLOEXEC, 0)
         check(fd >= 0) { "socket failed with errno ${-fd}" }
 
@@ -51,6 +52,9 @@ internal object Sockets {
                 setInt(fd, SOL_SOCKET, SO_REUSEPORT, 1)
             }
             setInt(fd, IPPROTO_TCP, TCP_NODELAY, 1)
+            if (userTimeoutMs > 0) {
+                setInt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, userTimeoutMs)
+            }
 
             zeroMemory(addr, SOCKADDR_IN_SIZE.toLong())
             putShort(addr, AF_INET.toShort())

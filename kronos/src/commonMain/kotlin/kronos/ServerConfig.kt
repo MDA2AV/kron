@@ -75,7 +75,10 @@ class IncrementalOptions(
  *   nothing the peer sends restarts it, so a peer that reads a little now and then can't hold a flush open either.
  *   Set it against the slowest legitimate flush, not against a stall: a large body to a slow peer is the false
  *   positive. Flushing such a body in pieces gives each piece its own deadline, so the peer then only has to keep
- *   up a minimum rate, the piece size per this timeout.
+ *   up a minimum rate, the piece size per this timeout. The listeners also carry it as TCP_USER_TIMEOUT, so the
+ *   kernel aborts a connection whose sent data has gone unacknowledged, or whose window has stayed shut with data
+ *   waiting, for that long. That covers what no flush blocks on: small flushes that still fit in the socket's
+ *   buffer, to a peer that vanished or stopped reading.
  */
 class TcpOptions(
     val port: Int = 8080,
