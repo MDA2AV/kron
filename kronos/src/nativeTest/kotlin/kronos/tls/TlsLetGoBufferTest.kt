@@ -56,8 +56,8 @@ class TlsLetGoBufferTest {
             val got = ByteArray(response.size)
             client.readFully(got, 0, got.size)
 
-            // Through to the server's close_notify, so closing sends a FIN: with it unread the close is a reset, which
-            // kronos does not always notice when it follows data closely.
+            // Through to the server's close_notify, so closing sends a FIN: with it unread the close is a reset, and a
+            // kernel without io_uring fix a68ed2df7213 (in 7.0) can miss a reset that follows data closely.
             val rest = ByteArray(256)
             while (client.read(rest, 0, rest.size) >= 0) {
                 // the end of the session
