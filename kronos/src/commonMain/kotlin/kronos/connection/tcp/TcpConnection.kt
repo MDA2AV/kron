@@ -493,6 +493,10 @@ class TcpConnection internal constructor(
      * only for letting go earlier. A peer still connected gets a FIN; the read side stays open until the peer
      * closes, bounded by [TcpOptions.readTimeoutMs]. Nobody reads that side from here on: what is queued and what a
      * reader holds can go back to the kernel at any point, so a handler that goes on must leave them alone.
+     *
+     * Connections are pooled: once the proactor lets go too, this object is the next client's connection, and a
+     * reference kept past that reads and writes that client's data, unchecked. A pipe says whether it still serves
+     * its own client: [PipeReader.isCurrent], [PipeWriter.isCurrent].
      */
     fun decRef() {
         if (!tcp.proactor.onProactorThread) {

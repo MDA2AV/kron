@@ -50,6 +50,11 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
     // Closed by a recv-queue overflow, which dropped data: an error, never the clean end a peer's close is.
     private val lostToOverflow: Boolean get() = connectionClosed && connection.recvOverflowed
 
+    // The connection's life this reader was made for; a recycle gives the pooled object the next client's.
+    private val generation = connection.generation
+
+    override val isCurrent: Boolean get() = connection.generation == generation
+
     init {
         // So the proactor can reclaim what this reader dequeued and never gave back.
         connection.bufferHolder = this
@@ -253,6 +258,11 @@ class TcpPipeWriter(private val connection: TcpConnection) : PipeWriter {
     private var completed = false
     private var cancelRequested = false
     private var waiter: Continuation<FlushResult>? = null
+
+    // The connection's life this writer was made for; a recycle gives the pooled object the next client's.
+    private val generation = connection.generation
+
+    override val isCurrent: Boolean get() = connection.generation == generation
 
     private val flushDone = object : Continuation<Unit> {
         override val context: CoroutineContext get() = EmptyCoroutineContext

@@ -103,6 +103,11 @@ class TlsDecryptingPipeReader(
 
     private val heldBytes: Long get() = (end - start).toLong()
 
+    // The connection's life this reader was made for; a recycle gives the pooled object the next client's.
+    private val generation = connection.generation
+
+    override val isCurrent: Boolean get() = connection.generation == generation
+
     init {
         check(connection.proactor.onProactorThread) { "Make a TLS pipe on its connection's proactor thread." }
 
@@ -391,6 +396,11 @@ class TlsEncryptingPipeWriter(
     }
 
     override val unflushedBytes: Long get() = staged.toLong()
+
+    // The connection's life this writer was made for; a recycle gives the pooled object the next client's.
+    private val generation = connection.generation
+
+    override val isCurrent: Boolean get() = connection.generation == generation
 
     override fun getBuffer(sizeHint: Int): Long {
         checkWritable()
