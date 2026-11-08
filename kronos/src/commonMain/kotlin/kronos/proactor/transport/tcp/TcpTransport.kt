@@ -593,7 +593,7 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
 
     /**
      * The clocks on a connection's lifecycle, once a tick: a connection waiting on a silent peer is reaped,
-     * and so is one whose send the peer stopped draining; a FIN left behind a flush goes out.
+     * and so is one whose flush has been out longer than the send timeout; a FIN left behind a flush goes out.
      */
     fun sweep() {
         for (listenFd in acceptPaused) {

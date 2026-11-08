@@ -65,8 +65,17 @@ class IncrementalOptions(
  * @property poolMax connection objects (with their slabs) a proactor keeps for reuse.
  * @property sendWaitAll sends carry MSG_WAITALL, so the kernel completes a send only when every byte is out.
  * @property recvQueueEntries recv completions a connection can hold unread, a power of two; one more closes it.
- * @property readTimeoutMs how long a connection may wait on a silent peer, in ~250 ms steps; 0 disables it.
- * @property sendTimeoutMs how long a flush may wait on a peer that stopped draining; 0 disables it.
+ * @property readTimeoutMs how long a read may wait on a silent peer, in ~250 ms steps; 0 disables it. The clock runs
+ *   only while a read waits with nothing queued, and a flush restarts it, so a handler that is busy, sending or not
+ *   reading is never timed out by it. It also bounds how long a peer has to close after its handler let go.
+ *   [TcpConnection.disableReadTimeout] takes a connection's reads off it.
+ * @property sendTimeoutMs how long one flush may take to go out, in ~250 ms steps; 0 disables it. It is there for a
+ *   peer that stopped reading: once the socket's buffer is full its send never completes, and the flush would hold
+ *   the connection and its slab for good. It is a deadline for the whole flush, not for progress within it, and
+ *   nothing the peer sends restarts it, so a peer that reads a little now and then can't hold a flush open either.
+ *   Set it against the slowest legitimate flush, not against a stall: a large body to a slow peer is the false
+ *   positive. Flushing such a body in pieces gives each piece its own deadline, so the peer then only has to keep
+ *   up a minimum rate, the piece size per this timeout.
  */
 class TcpOptions(
     val port: Int = 8080,
