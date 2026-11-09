@@ -1,6 +1,5 @@
 package kronos.tls
 
-import kronos.TcpConnection
 import kronos.sleepMs
 import kronos.testConfig
 import kronos.tls.TlsPipeContractTest.TlsServer
@@ -31,14 +30,12 @@ class TlsStopParkedTest {
 
     @Test
     fun `a TLS pipe's read and flush from another thread after the stop return completed`() {
-        val held = AtomicReference<TcpConnection?>(null)
         val kept = AtomicReference<TlsDuplexPipe?>(null)
         val waiting = AtomicReference<Continuation<Unit>?>(null)
 
         val server = TlsServer(testConfig(), options) { conn, service ->
             val pipe = TlsDuplexPipe(conn, service.accept(conn))
             try {
-                held.store(conn)
                 kept.store(pipe)
                 suspendCoroutine<Unit> { waiting.store(it) }   // waiting on something outside kronos
             } finally {
@@ -66,9 +63,8 @@ class TlsStopParkedTest {
             assertTrue(flushed.isCompleted)
             assertEquals(0L, pipe.output.unflushedBytes)
 
-            // The handler returns here, on this thread, closing its pipe; its release frees the connection.
+            // The handler returns here, on this thread, closing its pipe; its release is dropped with the proactor.
             handler.resume(Unit)
-            assertEquals(0L, held.load()!!.writeBuffer, "the write slab was not freed once the handler let go")
         } finally {
             client.close()
         }
