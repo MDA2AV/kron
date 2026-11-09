@@ -172,7 +172,7 @@ class TlsDecryptingPipeReader(
     }
 
     private suspend fun readOffProactor(): ReadResult = suspendCoroutine { cont ->
-        connection.proactor.post {
+        val handedOver = connection.proactor.tryPost {
             try {
                 val r = readOrPark(cont)
                 if (r !== COROUTINE_SUSPENDED) {
@@ -181,6 +181,13 @@ class TlsDecryptingPipeReader(
             } catch (e: Throwable) {
                 cont.resumeWithException(e)
             }
+        }
+
+        if (!handedOver) {
+            // The proactor has stopped, and closed every connection it had: what this reader holds, then the end. An
+            // ended reader completes at once, without reaching the connection or the session.
+            ended = true
+            cont.resumeWith(runCatching { readOrPark(cont) as ReadResult })
         }
     }
 
@@ -477,7 +484,7 @@ class TlsEncryptingPipeWriter(
     }
 
     private suspend fun flushOffProactor(): FlushResult = suspendCoroutine { cont ->
-        connection.proactor.post {
+        val handedOver = connection.proactor.tryPost {
             try {
                 val r = flushOrPark(cont)
                 if (r !== COROUTINE_SUSPENDED) {
@@ -487,6 +494,23 @@ class TlsEncryptingPipeWriter(
                 cont.resumeWithException(e)
             }
         }
+
+        if (!handedOver) {
+            cont.resume(flushAfterStop())
+        }
+    }
+
+    // The proactor has stopped, and closed every connection it had: as on any closed one, the flush is over and what
+    // was staged is dropped, unencrypted.
+    private fun flushAfterStop(): FlushResult {
+        if (cancelRequested) {
+            cancelRequested = false
+            return FlushResult.of(canceled = true, completed = true)
+        }
+
+        staged = 0
+        connection.dropStagedAfterClose()
+        return FlushResult.of(canceled = false, completed = true)
     }
 
     // The connection's flush completed - inline on the proactor. A closed connection reads as completed, so a
@@ -506,10 +530,8 @@ class TlsEncryptingPipeWriter(
 
     /** Done writing; sends nothing by itself, so flush first. From another thread it is handed to the proactor. */
     override fun complete() {
-        if (!connection.proactor.onProactorThread) {
-            connection.proactor.post {
-                complete()
-            }
+        // Once the proactor has stopped, here: the staging buffer is this writer's alone.
+        if (!connection.proactor.onProactorThread && connection.proactor.tryPost { complete() }) {
             return
         }
 

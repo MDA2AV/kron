@@ -101,6 +101,11 @@ internal class BufferRing(
         }
         registered = false
 
+        // A closed ring took its groups with it, and its number may be another ring's by now.
+        if (ring.isClosed) {
+            return
+        }
+
         val reg = Native.malloc(IoUring.BUF_REG_SIZE)
         zeroMemory(reg, IoUring.BUF_REG_SIZE)
         putShort(reg + 12, bgid.toShort())

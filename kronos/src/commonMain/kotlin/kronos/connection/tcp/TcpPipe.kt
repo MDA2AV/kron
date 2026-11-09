@@ -110,7 +110,7 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
     }
 
     private suspend fun readOffProactor(): ReadResult = suspendCoroutine { cont ->
-        connection.proactor.post {
+        val handedOver = connection.proactor.tryPost {
             try {
                 val r = readOrPark(cont)
                 if (r !== COROUTINE_SUSPENDED) {
@@ -119,6 +119,13 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
             } catch (e: Throwable) {
                 cont.resumeWithException(e)
             }
+        }
+
+        if (!handedOver) {
+            // The proactor has stopped, and closed every connection it had: what this reader holds, then the end. A
+            // closed reader completes at once, without reaching the connection.
+            connectionClosed = true
+            cont.resumeWith(runCatching { readOrPark(cont) as ReadResult })
         }
     }
 
@@ -312,7 +319,7 @@ class TcpPipeWriter(private val connection: TcpConnection) : PipeWriter {
     }
 
     private suspend fun flushOffProactor(): FlushResult = suspendCoroutine { cont ->
-        connection.proactor.post {
+        val handedOver = connection.proactor.tryPost {
             try {
                 val r = flushOrPark(cont)
                 if (r !== COROUTINE_SUSPENDED) {
@@ -322,6 +329,23 @@ class TcpPipeWriter(private val connection: TcpConnection) : PipeWriter {
                 cont.resumeWithException(e)
             }
         }
+
+        if (!handedOver) {
+            cont.resume(flushAfterStop())
+        }
+    }
+
+    // The proactor has stopped, and closed every connection it had: as on any closed one, the flush is over and what
+    // was staged is dropped.
+    private fun flushAfterStop(): FlushResult {
+        if (cancelRequested) {
+            cancelRequested = false
+            return FlushResult.of(canceled = true, completed = true)
+        }
+
+        unflushedBytes = 0
+        connection.dropStagedAfterClose()
+        return FlushResult.of(canceled = false, completed = true)
     }
 
     // The connection's flush completed - inline on the proactor. A closed connection reads as completed, as on

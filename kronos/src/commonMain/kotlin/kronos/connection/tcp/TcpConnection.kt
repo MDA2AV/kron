@@ -15,7 +15,8 @@ import kotlin.coroutines.suspendCoroutine
  * The handler runs on the proactor's thread, and so does everything here: a suspending call made from another
  * thread is carried over with [Proactor.post] and resumes the caller where it was, so none of the state below
  * races the proactor and none of it needs atomics. The recv queue is the exception - its consumer may be on
- * any thread - and so is [isClosed].
+ * any thread - and so is [isClosed]. Once the proactor has stopped, such a call is answered where it is made, the
+ * connection closed: see [Proactor.stop].
  *
  * Reading: [read] waits for data, [tryGetItem] takes each received buffer, [returnBuffer] hands it back.
  * Writing: [write] or [getBuffer] + [advance] stage bytes, [flush] sends them and waits until the kernel has
@@ -31,7 +32,7 @@ class TcpConnection internal constructor(
     /** The proactor this connection belongs to; its handler runs on that proactor's thread. */
     val proactor: Proactor get() = tcp.proactor
 
-    /** The accepted socket. The proactor owns it and closes it at recycle. */
+    /** The accepted socket. The proactor owns it and closes it at recycle, or when it stops. */
     var clientFd: Int = fd
         private set
 
@@ -108,7 +109,8 @@ class TcpConnection internal constructor(
 
     /**
      * Waits for received data. Returns at once when something is already queued or the connection is closed;
-     * otherwise suspends until the next recv completion, or the close.
+     * otherwise suspends until the next recv completion, or the close. A stop of the proactor closes the connection,
+     * so from another thread after it this returns closed at once.
      *
      * Take the items with [tryGetItem]; each one with a buffer must be handed back with [returnBuffer]. One
      * read at a time. The snapshot is the connection's own, valid until the next read.
@@ -142,7 +144,7 @@ class TcpConnection internal constructor(
     // A check that fails in the posted task goes back to the caller: the proactor survives a task that throws, so
     // nothing else would ever resume it.
     private suspend fun readOffProactor(): RecvSnapshot = suspendCoroutine { cont ->
-        tcp.proactor.post {
+        val handedOver = tcp.proactor.tryPost {
             try {
                 val result = readOrPark(cont)
                 if (result !== COROUTINE_SUSPENDED) {
@@ -151,6 +153,11 @@ class TcpConnection internal constructor(
             } catch (e: Throwable) {
                 cont.resumeWithException(e)
             }
+        }
+
+        if (!handedOver) {
+            // The proactor has stopped, and closed every connection it had.
+            cont.resume(snapshot.set(0, true))
         }
     }
 
@@ -365,7 +372,8 @@ class TcpConnection internal constructor(
      * resubmitted) - not for the peer's ACK. One flush at a time, and no writes while it is out.
      *
      * A connection already closed drops what is staged and returns; one that fails while sending also returns
-     * normally, so check [isClosed] (or the next read's snapshot) to learn of it.
+     * normally, so check [isClosed] (or the next read's snapshot) to learn of it. A stop of the proactor closes the
+     * connection too: a flush it finds parked returns once the kernel is done with the send.
      */
     suspend fun flush() {
         if (!tcp.proactor.onProactorThread) {
@@ -378,10 +386,7 @@ class TcpConnection internal constructor(
     // Proactor thread; the pipe writer chains onto it the way the pipe reader chains onto readOrPark.
     internal fun flushOrPark(cont: Continuation<Unit>): Any {
         if (closed) {
-            if (flushArmed != FLUSH_SUBMITTED) {
-                dropStaged()
-            }
-
+            dropStagedAfterClose()
             return Unit
         }
 
@@ -403,7 +408,7 @@ class TcpConnection internal constructor(
 
     // As readOffProactor: a failed check is the caller's exception, not a hang.
     private suspend fun flushOffProactor(): Unit = suspendCoroutine { cont ->
-        tcp.proactor.post {
+        val handedOver = tcp.proactor.tryPost {
             try {
                 if (flushOrPark(cont) !== COROUTINE_SUSPENDED) {
                     cont.resume(Unit)
@@ -412,12 +417,26 @@ class TcpConnection internal constructor(
                 cont.resumeWithException(e)
             }
         }
+
+        if (!handedOver) {
+            // The proactor has stopped, and closed every connection it had.
+            dropStagedAfterClose()
+            cont.resume(Unit)
+        }
     }
 
     // The connection is torn down, so nothing will ever send the staged bytes; keeping them would make a writer
     // against a vanished peer grow the slab without end.
     private fun dropStaged() {
         writeTail = 0
+    }
+
+    // A flush of a closed connection, here or in a pipe over it: what is staged goes, unless the kernel may still be
+    // reading the slab for a send.
+    internal fun dropStagedAfterClose() {
+        if (flushArmed != FLUSH_SUBMITTED) {
+            dropStaged()
+        }
     }
 
     // The proactor takes the flush to the kernel. False if it was released first.
@@ -497,11 +516,14 @@ class TcpConnection internal constructor(
      * Connections are pooled: once the proactor lets go too, this object is the next client's connection, and a
      * reference kept past that reads and writes that client's data, unchecked. A pipe says whether it still serves
      * its own client: isValid() on [TcpDuplexPipe], [kronos.tls.TlsDuplexPipe] and each of their halves.
+     *
+     * A stop of the proactor lets go of the connection, its socket closed. The handler's release after that, on
+     * whatever thread it is made, frees the connection's memory.
      */
     fun decRef() {
         if (!tcp.proactor.onProactorThread) {
-            tcp.proactor.post {
-                decRef()
+            if (!tcp.proactor.tryPost { decRef() }) {
+                releaseAfterStop(generation)
             }
 
             return
@@ -526,6 +548,43 @@ class TcpConnection internal constructor(
     private fun releaseRef() {
         if (--refs == 0) {
             tcp.recycle(this)
+        }
+    }
+
+    // Set by the proactor's stop, which closed the socket and keeps the object until both refs are gone.
+    internal var socketClosed = false
+
+    // The stop's release of the proactor's ref. With the handler gone too, nothing will touch the connection again.
+    internal fun releaseProactorRefAtStop() {
+        if (--refs == 0) {
+            disposeAfterStop()
+        }
+    }
+
+    // The handler's release once the proactor has stopped, made on whatever thread it lets go: run when nothing on the
+    // proactor can touch the connection any more.
+    private fun releaseAfterStop(lifeGeneration: Int) {
+        tcp.proactor.afterTeardown {
+            if (generation == lifeGeneration && !handlerRefReleased) {
+                handlerRefReleased = true
+
+                if (--refs == 0) {
+                    disposeAfterStop()
+                }
+            }
+        }
+    }
+
+    // What recycle does, with no ring left to do it with: the socket, unless the stop closed it, and the memory. A send
+    // the kernel never said it was done with keeps the slab, which it may still be reading.
+    private fun disposeAfterStop() {
+        if (!socketClosed) {
+            Native.close(clientFd)
+            socketClosed = true
+        }
+
+        if (!flushSubmitted) {
+            dispose()
         }
     }
 
@@ -592,8 +651,8 @@ class TcpConnection internal constructor(
     // the ref of its next life.
     internal fun releaseHandlerRef(lifeGeneration: Int) {
         if (!tcp.proactor.onProactorThread) {
-            tcp.proactor.post {
-                releaseHandlerRef(lifeGeneration)
+            if (!tcp.proactor.tryPost { releaseHandlerRef(lifeGeneration) }) {
+                releaseAfterStop(lifeGeneration)
             }
 
             return
@@ -625,6 +684,7 @@ class TcpConnection internal constructor(
         finSent = FIN_NONE
         sweepClosed = false
         closeAfterSend = false
+        socketClosed = false
 
         writeHead = 0
         writeTail = 0

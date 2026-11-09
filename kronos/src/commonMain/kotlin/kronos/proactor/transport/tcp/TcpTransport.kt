@@ -57,6 +57,9 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
                 Native.close(fd)
             }
         }
+
+        // So a handler the teardown wakes, calling stopAccepting, does not close these numbers again.
+        accepting = false
     }
 
     // False once stopAccepting ran: no accept is re-armed, and the listeners are closed.
@@ -137,6 +140,11 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
         }
 
         while (!returnQ.offer(value)) {
+            // A stopped proactor drains nothing, and its buffers go with it.
+            if (proactor.refusingPosts) {
+                return
+            }
+
             spinWait()
         }
 
@@ -683,7 +691,9 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
 
     // ---- Teardown ---------------------------------------------------------------------------------------
 
-    // Live connections' sockets are closed, never their objects: a handler may still write to them.
+    // A live connection is marked closed, which wakes a read parked on it and makes every later read and flush
+    // return at once, then its socket closes. The object stays in the table until [releaseLiveConnections]: a handler
+    // woken here may still be using it.
     fun closeAcceptedSockets() {
         val conns = connections
 
@@ -692,8 +702,41 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
 
             // A handler letting go later must not shut down whatever socket gets the number next.
             conn.suppressFin()
+
+            // Before the socket goes, so a handler woken here unwinds while the number is still its connection's.
+            conn.markClosed()
             Native.close(fd)
+            conn.socketClosed = true
+        }
+    }
+
+    // After the SQ went to the kernel. A flush the kernel has ends only once the kernel says it is done with the send,
+    // as the slab is the handler's again from then on: the send is cancelled by its tag and waited for. One the kernel
+    // cannot vouch for in time stays parked, its slab kept.
+    fun endParkedFlushes() {
+        val conns = connections
+
+        for (fd in conns.indices) {
+            val conn = conns[fd] ?: continue
+            if (conn.flushSubmitted && proactor.cancelAndWait(tag(KIND_TCP_SEND, conn.generation and 0xFFFF, fd))) {
+                // Not finishSend: with closeAfterSend set, it would recycle, closing the socket's number a second time.
+                conn.completeFlush()
+            }
+        }
+    }
+
+    // Last, once no handler code is left to run on the proactor. A connection's own buffer ring is unregistered while
+    // the ring is still open, and the proactor lets go of the connection: one its handler let go of too is freed now,
+    // another when its handler lets go, on whatever thread that is.
+    fun releaseLiveConnections() {
+        val conns = connections
+
+        for (fd in conns.indices) {
+            val conn = conns[fd] ?: continue
             conns[fd] = null
+
+            conn.ring?.unregister()
+            conn.releaseProactorRefAtStop()
         }
     }
 
