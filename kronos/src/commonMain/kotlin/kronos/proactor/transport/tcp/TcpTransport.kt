@@ -595,17 +595,25 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
 
         Native.close(fd)
 
-        // Its own ring, in incremental mode: unregistered now, its gid free for the next accept. The cancel above
-        // goes in with the next enter, ahead of any task work there that could still select from the ring.
+        // The cancel above goes in with the next enter, ahead of any task work there that could still select from the
+        // connection's own ring.
+        releaseOwnRing(conn)
+        conn.clear()
+        openConnections--
+        returnToPool(conn)
+    }
+
+    // Its own ring, in incremental mode: unregistered now, its gid free for the next accept.
+    private fun releaseOwnRing(conn: TcpConnection) {
         val ring = conn.ring
         if (ring != null) {
             freeGids[freeGidCount++] = ring.bgid
             ring.unregister()
         }
+    }
 
-        conn.clear()
-        openConnections--
-
+    // A cleared connection: kept for the next accept, or its memory freed right here once the pool is full.
+    private fun returnToPool(conn: TcpConnection) {
         if (pool.size < options.poolMax) {
             pool.addLast(conn)
         } else {
@@ -727,8 +735,24 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
             if (canCancel && conn.flushSubmitted && proactor.cancelAndWait(sendTag)) {
                 conn.completeFlush()
             }
+        }
+    }
 
+    // Once every wake is done, while the ring is open: a connection its handler let go of goes back to the pool as a
+    // recycle would, and the teardown's last step frees it. One a handler still holds, or whose send the kernel may
+    // still be reading, keeps its memory, as a write into it would land in freed memory.
+    fun returnReleasedConnections() {
+        val conns = connections
+
+        for (fd in conns.indices) {
+            val conn = conns[fd] ?: continue
             conns[fd] = null
+
+            if (conn.handlerReleased && !conn.flushSubmitted) {
+                releaseOwnRing(conn)
+                conn.clear()
+                returnToPool(conn)
+            }
         }
     }
 

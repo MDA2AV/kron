@@ -598,6 +598,7 @@ class Proactor(val id: Int, private val config: ServerConfig) {
             if (submitted) {
                 completeParkedOps()
             }
+            tcp?.returnReleasedConnections()
 
             tcp?.unregisterBufferRing()
 
