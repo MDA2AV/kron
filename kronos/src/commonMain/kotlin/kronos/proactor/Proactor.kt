@@ -86,7 +86,7 @@ class Proactor(val id: Int, private val config: ServerConfig) {
         try {
             runHere()
         } finally {
-            // No longer the proactor's thread: what it calls from here on is handed over, and refused.
+            // No longer the proactor's thread: what it calls from here on is handed over, as from any other.
             currentProactor = null
         }
     }
@@ -103,9 +103,8 @@ class Proactor(val id: Int, private val config: ServerConfig) {
             ring = Ring.create(config.ringEntries)
         } catch (e: Throwable) {
             // Nothing will ever run a post.
-            postGate.close()
-            lateGate.close()
-            tornDown = true
+            postsClosed = true
+            drainStopped()
 
             val fault = onFault ?: throw e
             fault(this, e)
@@ -199,7 +198,7 @@ class Proactor(val id: Int, private val config: ServerConfig) {
      * The teardown ends what is waiting on the proactor, so a handler parked on it unwinds, its finally blocks run:
      * a read wakes to a closed connection, and a flush or a [RingTimer] wait returns once the kernel is done with it.
      * From another thread, what is called after the stop returns at once: a read closed, a flush with what was staged
-     * dropped, a wait [RingTimer.ECANCELED]. A live connection's memory goes once its handler has let go too.
+     * dropped, a wait [RingTimer.ECANCELED], and a [post] is dropped.
      */
     fun stop() {
         stopRequested = true
@@ -388,97 +387,61 @@ class Proactor(val id: Int, private val config: ServerConfig) {
     /**
      * Runs [task] on the proactor thread, on the loop's next pass. Always queued, so a post from the proactor
      * thread itself runs after the current dispatch; from another thread it wakes the loop. Once the proactor has
-     * stopped, a post from another thread is dropped: nothing will ever run it.
+     * stopped, a post is dropped: nothing will ever run it.
      */
     fun post(task: () -> Unit) {
-        tryPost(task)
-    }
-
-    // Posts from other threads: closed by the stop, which then drains what got in.
-    private val postGate = ProducerGate()
-
-    /**
-     * [post], saying whether [task] was taken: false from another thread once the proactor has stopped, when nothing
-     * will run it and the caller answers instead. A task taken from another thread runs, in the teardown at the latest.
-     */
-    internal fun tryPost(task: () -> Unit): Boolean {
-        if (onProactorThread) {
-            postQ.offer(task)
-            return true
-        }
-
-        if (!postGate.enter()) {
-            return false
-        }
-
-        try {
-            postQ.offer(task)
+        postQ.offer(task)
+        if (!onProactorThread) {
             wake()
-        } finally {
-            postGate.leave()
+            if (postsClosed) {
+                drainStopped()   // the stop's last drain may have missed it
+            }
         }
-
-        return true
     }
 
-    /** True once the stop refuses posts from other threads, its teardown under way or done. */
-    internal val refusingPosts: Boolean get() = postGate.isClosed
+    // Set last in the teardown: from then on nothing runs on the proactor, and whoever posts drains (#29).
+    @Volatile
+    internal var postsClosed = false
+        private set
 
-    // A handler's release made on another thread once posts are refused. The teardown runs these at its end, here,
-    // the ring still open; one made after that runs where it is made, once the teardown is over.
-    private val lateReleases = MpscQueue<() -> Unit>()
-    private val lateGate = ProducerGate()
+    // Only ever taken once posts are closed, so the queue has one consumer at a time then too.
+    private val stoppedDrain = AtomicInt(0)
 
-    // Set last in the teardown: from then on nothing on the proactor thread touches a connection again.
-    @Volatile private var tornDown = false
-
-    /**
-     * Runs [release] once nothing on the proactor thread can touch the connection it lets go of: at the teardown's
-     * end, or here once the teardown is over. For a release refused its post.
-     */
-    internal fun afterTeardown(release: () -> Unit) {
-        if (lateGate.enter()) {
-            try {
-                lateReleases.offer(release)
-            } finally {
-                lateGate.leave()
+    // A [Handoff] runs, answering as on a closed connection; any other post is dropped, as nothing would run it on the
+    // proactor either. Each runs outside the lock: it may post again.
+    private fun drainStopped() {
+        while (true) {
+            val task = takeStopped() ?: return
+            if (task is Handoff) {
+                runPosted(task)
             }
-
-            return
         }
+    }
 
-        // The teardown has taken its last batch, and runs no handler code from there on: the wait is short.
-        while (!tornDown) {
+    private fun takeStopped(): (() -> Unit)? {
+        while (!stoppedDrain.compareAndSet(0, 1)) {
             spinWait()
         }
 
-        release()
-    }
-
-    // The teardown's last batch of releases, on the proactor thread: what kronos itself does, no handler code.
-    private fun runLateReleases() {
-        lateGate.close()
-
-        while (true) {
-            val release = lateReleases.poll() ?: return
-            try {
-                release()
-            } catch (e: Throwable) {
-                printErr("[p$id] release at stop threw: ${e.stackTraceToString()}")
-            }
+        try {
+            return postQ.poll()
+        } finally {
+            stoppedDrain.store(0)
         }
     }
 
     internal fun drainPostQ() {
         while (true) {
-            val task = postQ.poll() ?: return
+            runPosted(postQ.poll() ?: return)
+        }
+    }
 
-            // A task that throws must not unwind the loop and end the proactor.
-            try {
-                task()
-            } catch (e: Throwable) {
-                printErr("[p$id] posted task threw: ${e.stackTraceToString()}")
-            }
+    // A task that throws must not unwind the loop and end the proactor.
+    private fun runPosted(task: () -> Unit) {
+        try {
+            task()
+        } catch (e: Throwable) {
+            printErr("[p$id] posted task threw: ${e.stackTraceToString()}")
         }
     }
 
@@ -526,12 +489,12 @@ class Proactor(val id: Int, private val config: ServerConfig) {
      * submission is handed over. The callback form of [RingTimer], for a caller with a continuation of its own to
      * resume, such as a coroutine dispatcher's delay.
      *
-     * A wait still parked when the proactor stops completes with -ECANCELED. From another thread once it has stopped,
-     * this throws [IllegalStateException]: nothing would ever complete the wait.
+     * A wait still parked when the proactor stops completes with -ECANCELED, as does one handed over from another
+     * thread once it has stopped.
      */
     fun submitTimeout(nanoseconds: Long, completion: RingCompletion) {
         if (!onProactorThread) {
-            check(tryPost { submitTimeout(nanoseconds, completion) }) { "proactor $id has stopped" }
+            post(handoff { submitTimeoutHandedOver(nanoseconds, completion) })
             return
         }
 
@@ -544,6 +507,15 @@ class Proactor(val id: Int, private val config: ServerConfig) {
         putLong(ts + 8, ns % 1_000_000_000L)
 
         IoUring.prep(getSqeOrFlush(), IoUring.OP_TIMEOUT, -1, ts, 1, 0L, tag(KIND_OP, 0, slot))
+    }
+
+    // A timeout handed over from another thread: on the proactor, or once it has stopped wherever it is found.
+    internal fun submitTimeoutHandedOver(nanoseconds: Long, completion: RingCompletion) {
+        if (postsClosed) {
+            completion.complete(-Native.ECANCELED)
+        } else {
+            submitTimeout(nanoseconds, completion)
+        }
     }
 
     private fun onOpCompletion(slot: Int, res: Int) {
@@ -603,32 +575,13 @@ class Proactor(val id: Int, private val config: ServerConfig) {
             val startFailed = !ranLoop
             stopRequested = true
 
-            // What the last pass prepared reaches the kernel while every socket it names is still open: a send left
-            // in the SQ would leave with a later submit, to whatever socket has its number by then, and no cancel finds
-            // what the kernel never saw.
+            // Every connection closed to its handler first, then the queue sent while each socket it names is still its
+            // own: left queued, a later submit would send it to whatever took the number (#29).
+            tcp?.markAcceptedConnectionsClosed()
             val submitted = !startFailed && submitPending()
 
             tcp?.closeListeners()
-            // Each live connection is marked closed, which wakes a read parked on it: its handler unwinds here, inline.
             tcp?.closeAcceptedSockets()
-
-            // A post from another thread is refused from here on, and its caller answers for it. The ones taken run
-            // now, with what the woken handlers posted.
-            postGate.close()
-            drainPostQ()
-
-            // A flush the kernel has and a wait on the ring end once the kernel is done with them; what their handlers
-            // post runs too.
-            if (submitted) {
-                tcp?.endParkedFlushes()
-            }
-            completeParkedOps()
-            drainPostQ()
-
-            // No handler code is left to run here: the proactor lets go of its live connections, then runs what
-            // handlers let go of from other threads meanwhile.
-            tcp?.releaseLiveConnections()
-            runLateReleases()
 
             // Taken away before it is closed, and its writers waited out.
             val fd = wakeFd.exchange(0)
@@ -637,6 +590,13 @@ class Proactor(val id: Int, private val config: ServerConfig) {
                     spinWait()
                 }
                 Native.close(fd)
+            }
+
+            // While the ring is still open; what a waiter submits again can't name a socket this stop closed. With the
+            // SQ not emptied nothing is ended: the kernel may still take what is left there.
+            tcp?.releaseAcceptedConnections(canCancel = submitted)
+            if (submitted) {
+                completeParkedOps()
             }
 
             tcp?.unregisterBufferRing()
@@ -655,8 +615,10 @@ class Proactor(val id: Int, private val config: ServerConfig) {
             Native.free(wakeBuffers)
             wakeBuffers = 0L
         } finally {
-            // Even after a fault here: a release waiting for this must not wait for good.
-            tornDown = true
+            // Last, even after a fault here, so what is still queued, or posted from here on, is dropped or answered
+            // rather than waiting forever.
+            postsClosed = true
+            drainStopped()
         }
     }
 
@@ -734,4 +696,14 @@ class Proactor(val id: Int, private val config: ServerConfig) {
 /** An in-flight ring operation's completion, called on the proactor thread with the CQE's result. */
 fun interface RingCompletion {
     fun complete(result: Int)
+}
+
+/**
+ * A call from another thread that its caller waits on, posted to the proactor. Once the proactor has stopped,
+ * whichever thread finds one runs it there, where it answers as on a closed connection, or with -ECANCELED.
+ */
+internal abstract class Handoff : () -> Unit
+
+internal inline fun handoff(crossinline block: () -> Unit): Handoff = object : Handoff() {
+    override fun invoke() = block()
 }

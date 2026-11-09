@@ -43,10 +43,7 @@ internal class Ring private constructor(
     private var enterFlags = 0
 
     private var closeFd = true
-
-    /** Whether [close] has run: the mappings are gone, and the descriptor with them unless the start failed. */
-    var isClosed = false
-        private set
+    private var closed = false
 
     /** The next free SQE's address, or 0 when the SQ is full. */
     fun getSqe(): Long {
@@ -141,10 +138,10 @@ internal class Ring private constructor(
     }
 
     override fun close() {
-        if (isClosed) {
+        if (closed) {
             return
         }
-        isClosed = true
+        closed = true
 
         Native.munmap(ringPtr, ringSize)
         Native.munmap(sqesPtr, sqesSize)

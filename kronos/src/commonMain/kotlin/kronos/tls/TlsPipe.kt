@@ -16,6 +16,7 @@ import kronos.TcpPipeWriter
 import kronos.checkFromIndexSize
 import kronos.copyFromArray
 import kronos.copyMemory
+import kronos.handoff
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
@@ -172,8 +173,14 @@ class TlsDecryptingPipeReader(
     }
 
     private suspend fun readOffProactor(): ReadResult = suspendCoroutine { cont ->
-        val handedOver = connection.proactor.tryPost {
+        connection.proactor.post(handoff {
             try {
+                // Run here once the proactor has stopped: what this reader holds, then the end, without reaching the
+                // session, whose BoringSSL is the proactor's.
+                if (connection.proactor.postsClosed) {
+                    ended = true
+                }
+
                 val r = readOrPark(cont)
                 if (r !== COROUTINE_SUSPENDED) {
                     cont.resume(r as ReadResult)
@@ -181,14 +188,7 @@ class TlsDecryptingPipeReader(
             } catch (e: Throwable) {
                 cont.resumeWithException(e)
             }
-        }
-
-        if (!handedOver) {
-            // The proactor has stopped, and closed every connection it had: what this reader holds, then the end. An
-            // ended reader completes at once, without reaching the connection or the session.
-            ended = true
-            cont.resumeWith(runCatching { readOrPark(cont) as ReadResult })
-        }
+        })
     }
 
     // The connection's read completed while a caller was parked - inline on the proactor.
@@ -484,8 +484,14 @@ class TlsEncryptingPipeWriter(
     }
 
     private suspend fun flushOffProactor(): FlushResult = suspendCoroutine { cont ->
-        val handedOver = connection.proactor.tryPost {
+        connection.proactor.post(handoff {
             try {
+                // Run here once the proactor has stopped: what is staged is dropped unencrypted, as on a closed
+                // connection, BoringSSL being the proactor's.
+                if (connection.proactor.postsClosed) {
+                    staged = 0
+                }
+
                 val r = flushOrPark(cont)
                 if (r !== COROUTINE_SUSPENDED) {
                     cont.resume(r as FlushResult)
@@ -493,24 +499,7 @@ class TlsEncryptingPipeWriter(
             } catch (e: Throwable) {
                 cont.resumeWithException(e)
             }
-        }
-
-        if (!handedOver) {
-            cont.resume(flushAfterStop())
-        }
-    }
-
-    // The proactor has stopped, and closed every connection it had: as on any closed one, the flush is over and what
-    // was staged is dropped, unencrypted.
-    private fun flushAfterStop(): FlushResult {
-        if (cancelRequested) {
-            cancelRequested = false
-            return FlushResult.of(canceled = true, completed = true)
-        }
-
-        staged = 0
-        connection.dropStagedAfterClose()
-        return FlushResult.of(canceled = false, completed = true)
+        })
     }
 
     // The connection's flush completed - inline on the proactor. A closed connection reads as completed, so a
@@ -530,8 +519,10 @@ class TlsEncryptingPipeWriter(
 
     /** Done writing; sends nothing by itself, so flush first. From another thread it is handed to the proactor. */
     override fun complete() {
-        // Once the proactor has stopped, here: the staging buffer is this writer's alone.
-        if (!connection.proactor.onProactorThread && connection.proactor.tryPost { complete() }) {
+        if (!connection.proactor.onProactorThread) {
+            connection.proactor.post {
+                complete()
+            }
             return
         }
 

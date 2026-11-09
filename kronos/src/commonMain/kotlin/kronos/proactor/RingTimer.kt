@@ -51,19 +51,19 @@ class RingTimer(private val proactor: Proactor) {
     // A check that fails in the posted task goes back to the caller: the proactor survives a task that throws, so
     // nothing else would ever resume it.
     private suspend fun delayOffProactor(nanoseconds: Long): Int = suspendCoroutine { cont ->
-        val handedOver = proactor.tryPost {
+        proactor.post(handoff {
             try {
                 check(waiter == null) { "RingTimer already waiting" }
-                proactor.submitTimeout(nanoseconds, completion)
-                waiter = cont
+                if (proactor.postsClosed) {
+                    cont.resume(ECANCELED)   // the proactor has stopped: nothing would ever end the wait
+                } else {
+                    proactor.submitTimeout(nanoseconds, completion)
+                    waiter = cont
+                }
             } catch (e: Throwable) {
                 cont.resumeWithException(e)
             }
-        }
-
-        if (!handedOver) {
-            cont.resume(ECANCELED)   // the proactor has stopped: nothing would ever end the wait
-        }
+        })
     }
 
     companion object {
