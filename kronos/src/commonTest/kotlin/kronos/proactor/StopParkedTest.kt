@@ -11,23 +11,26 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
  * What a stop does to what is waiting on the proactor (#29). A handler parked in a read, a flush or a RingTimer wait
- * gets to unwind, its finally run; a call from another thread after the stop returns; and what was queued for a
- * socket the stop closes goes to that socket's client, not to whatever takes its number next.
+ * gets to unwind, its finally run and its connection freed; a call from another thread after the stop returns; and
+ * what was queued for a socket the stop closes goes to that socket's client, not to whatever takes its number next.
  */
 class StopParkedTest {
-    // A handler parked on the proactor, and the server stopped under it: true once its finally ran.
+    // A handler parked on the proactor, and the server stopped under it: its connection, and whether its finally ran.
     private fun stopUnder(
         handler: suspend (TcpConnection, Latch) -> Unit,
         client: (Int) -> TestSocket = { port -> connect(port) },
-    ): Boolean {
+    ): Stopped {
+        val held = AtomicReference<TcpConnection?>(null)
         val parked = Latch(1)
         val finished = Latch(1)
 
         val server = TestServer(testConfig()) { conn ->
+            held.store(conn)
             try {
                 handler(conn, parked)
             } finally {
@@ -41,11 +44,13 @@ class StopParkedTest {
             sleepMs(100)   // a flush's send reaches the kernel, and the handler's suspension the proactor's loop
 
             server.close()   // stops the proactor and joins its thread: the teardown is over when this returns
-            return finished.count == 0
+            return Stopped(held.load()!!, finished.count == 0)
         } finally {
             socket.close()
         }
     }
+
+    private class Stopped(val conn: TcpConnection, val finallyRan: Boolean)
 
     private fun connect(port: Int): TestSocket = TestSocket().also {
         it.setReceiveTimeout(5_000)
@@ -53,30 +58,32 @@ class StopParkedTest {
     }
 
     @Test
-    fun `a handler parked in a read runs its finally`() {
-        val finallyRan = stopUnder({ conn, parked ->
+    fun `a handler parked in a read runs its finally and its connection is freed`() {
+        val stopped = stopUnder({ conn, parked ->
             parked.countDown()
             conn.read()
         })
 
-        assertTrue(finallyRan, "the handler is still parked in its read, its finally not run")
+        assertTrue(stopped.finallyRan, "the handler is still parked in its read, its finally not run")
+        assertEquals(0L, stopped.conn.writeBuffer, "the write slab was not freed")
     }
 
     @Test
     fun `a handler parked in a RingTimer wait runs its finally - the wait cancelled`() {
         val result = AtomicInt(0)
-        val finallyRan = stopUnder({ conn, parked ->
+        val stopped = stopUnder({ conn, parked ->
             parked.countDown()
             result.store(RingTimer(conn.proactor).delay(600_000))
         })
 
-        assertTrue(finallyRan, "the handler is still parked in its wait, its finally not run")
+        assertTrue(stopped.finallyRan, "the handler is still parked in its wait, its finally not run")
         assertEquals(RingTimer.ECANCELED, result.load())
+        assertEquals(0L, stopped.conn.writeBuffer, "the write slab was not freed")
     }
 
     @Test
-    fun `a handler parked in a flush its client holds up runs its finally`() {
-        val finallyRan = stopUnder(
+    fun `a handler parked in a flush its client holds up runs its finally and its connection is freed`() {
+        val stopped = stopUnder(
             { conn, parked ->
                 conn.write(ByteArray(16 shl 20))   // far more than both sockets' buffers hold
                 parked.countDown()
@@ -91,7 +98,94 @@ class StopParkedTest {
             },
         )
 
-        assertTrue(finallyRan, "the handler is still parked in its flush, its finally not run")
+        assertTrue(stopped.finallyRan, "the handler is still parked in its flush, its finally not run")
+        assertEquals(0L, stopped.conn.writeBuffer, "the write slab was not freed")
+    }
+
+    @Test
+    fun `a connection its handler let go of has its memory freed - one a handler still holds keeps it - shared ring`() =
+        letGoOrHeld(incremental = null)
+
+    @Test
+    fun `a connection its handler let go of has its memory freed - one a handler still holds keeps it - incremental`() {
+        if (LetGoDriver.incrementalSupported) {
+            letGoOrHeld(LetGoDriver.INCREMENTAL.incremental)
+        }
+    }
+
+    // A read, a flush its client holds up, a RingTimer wait, a handler that let go, and one held outside kronos.
+    private fun letGoOrHeld(incremental: IncrementalOptions?) {
+        val conns = HashMap<Char, TcpConnection>()   // filled on the proactor thread, read after its join
+        val parked = Latch(ROLES.length)
+        val held = AtomicReference<Continuation<Unit>?>(null)
+
+        val config = ServerConfig(
+            proactorCount = 1,
+            ringEntries = 256,
+            recvBufferSize = 4096,
+            recvSlots = 64,
+            tcp = TcpOptions(port = 0),
+            incremental = incremental,
+        )
+
+        val server = TestServer(config) { conn ->
+            val role = readRole(conn).toChar()
+            conns[role] = conn
+            when (role) {
+                'r' -> {
+                    parked.countDown()
+                    conn.read()
+                }
+                'f' -> {
+                    conn.write(ByteArray(16 shl 20))   // far more than both sockets' buffers hold
+                    parked.countDown()
+                    conn.flush()
+                }
+                't' -> {
+                    parked.countDown()
+                    RingTimer(conn.proactor).delay(600_000)
+                }
+                'l' -> parked.countDown()   // lets go at once, its client still connected
+                'h' -> {
+                    parked.countDown()
+                    suspendCoroutine<Unit> { held.store(it) }   // busy outside kronos when the stop comes
+                    conn.write("late".encodeToByteArray())
+                    conn.flush()
+                }
+            }
+        }
+
+        val clients = ROLES.map { role ->
+            TestSocket().also {
+                if (role == 'f') {
+                    it.setReceiveBuffer(64 * 1024)   // never reads, and takes little
+                }
+                it.connect(server.port)
+                it.write(byteArrayOf(role.code.toByte()))
+            }
+        }
+
+        try {
+            assertTrue(parked.await(5_000), "the handlers never parked")
+            sleepMs(200)   // the flush's send reaches the kernel
+
+            server.close()
+
+            for (role in "rftl") {
+                val conn = conns.getValue(role)
+                assertEquals(0L, conn.writeBuffer, "the write slab of the '$role' connection outlived its proactor")
+                if (incremental != null) {
+                    assertNull(conn.ring, "the buffer ring of the '$role' connection outlived its proactor")
+                }
+            }
+
+            val kept = conns.getValue('h')
+            assertTrue(kept.writeBuffer != 0L, "the write slab of a connection its handler still holds was freed under it")
+            held.load()!!.resume(Unit)   // writes and flushes, here, into memory still its own
+        } finally {
+            clients.forEach { it.close() }
+            server.close()
+        }
     }
 
     @Test
@@ -306,6 +400,27 @@ class StopParkedTest {
 
     private companion object {
         val QUEUED = "QUEUED-FOR-THE-CLOSED-SOCKET".encodeToByteArray()
+
+        const val ROLES = "rftlh"
+
+        // The one byte a test client sends.
+        suspend fun readRole(conn: TcpConnection): Int {
+            val item = RecvItem()
+            while (true) {
+                val snapshot = conn.read()
+                var role = -1
+                while (conn.tryGetItem(snapshot, item)) {
+                    if (item.hasBuffer && role < 0) {
+                        role = getByte(item.address).toInt()
+                    }
+                    conn.returnBuffer(item)
+                }
+
+                if (role >= 0 || snapshot.isClosed) {
+                    return role
+                }
+            }
+        }
 
         // With opSlots = 4 the fifth wait grows the op table, which first submits whatever is queued.
         fun fourOpSlots(): ServerConfig = ServerConfig(
