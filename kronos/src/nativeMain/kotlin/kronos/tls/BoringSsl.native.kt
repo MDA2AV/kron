@@ -396,7 +396,7 @@ internal actual object BoringSsl {
         return out
     }
 
-    actual fun cString(address: Long): String = address.toCPointer<ByteVar>()?.toKString() ?: ""
+    private fun cString(address: Long): String = address.toCPointer<ByteVar>()?.toKString() ?: ""
 
     private fun CPointer<*>?.address(): Long = this?.rawValue?.toLong() ?: 0L
 }

@@ -66,5 +66,4 @@ internal expect object BoringSsl {
     fun errorIsEndOfPem(): Boolean
     fun lastError(): String
     fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray
-    fun cString(address: Long): String
 }
