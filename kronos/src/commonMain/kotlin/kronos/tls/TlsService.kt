@@ -11,6 +11,8 @@ import kronos.putByte
 import kronos.putShort
 import kronos.IOException
 import kronos.readFileBytes
+import kronos.spinWait
+import kotlin.concurrent.atomics.AtomicInt
 
 /**
  * One proactor's TLS termination. [accept] runs the handshake through BoringSSL memory BIOs, its bytes riding
@@ -18,8 +20,8 @@ import kronos.readFileBytes
  * there. BoringSSL owns both directions by default; kernel TLS is opt-in per direction ([TlsOptions.kernelTx],
  * [TlsOptions.kernelRx]) and the handoff happens here, right after the handshake.
  *
- * Start one per proactor from [Proactor.onStart], so the context and its ticket keys belong to the thread that
- * uses them; a ticket resumes on the proactor that issued it.
+ * Start one per proactor from [Proactor.onStart]. Every proactor started with the same [TlsOptions] instance shares
+ * one context, built by the first to start, so a ticket one of them issued resumes on any other.
  */
 class TlsService private constructor(
     private val proactor: Proactor,
@@ -292,12 +294,13 @@ class TlsService private constructor(
             }
         }
 
-        /** Builds [proactor]'s TLS context from [options] and starts its handshake sweep. Call from [Proactor.onStart]. */
+        /**
+         * Starts [proactor]'s TLS service on the context of [options], building it on the first call, and its handshake
+         * sweep. Call from [Proactor.onStart].
+         */
         fun start(proactor: Proactor, options: TlsOptions): TlsService {
             validate(options)
-            val alpnWire = alpnWire(options.alpn)
-            val context = newContext(options, alpnWire)
-            val service = TlsService(proactor, options, context)
+            val service = TlsService(proactor, options, sharedContext(options))
 
             if (options.handshakeTimeoutMs > 0) {
                 proactor.addTicker {
@@ -306,6 +309,25 @@ class TlsService private constructor(
             }
 
             return service
+        }
+
+        // Taken at startup only, while proactors start side by side.
+        private val building = AtomicInt(0)
+
+        private fun sharedContext(options: TlsOptions): Long {
+            while (!building.compareAndSet(0, 1)) {
+                spinWait()
+            }
+
+            try {
+                if (options.context == 0L) {
+                    options.context = newContext(options, alpnWire(options.alpn))
+                }
+
+                return options.context
+            } finally {
+                building.store(0)
+            }
         }
 
         // The combinations that cannot hold are named here rather than resolved by whichever setting runs last.
