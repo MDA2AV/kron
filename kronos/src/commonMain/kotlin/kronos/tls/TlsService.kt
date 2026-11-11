@@ -24,7 +24,8 @@ import kronos.readFileBytes
 class TlsService private constructor(
     private val proactor: Proactor,
     private val options: TlsOptions,
-    private val context: Long,
+    private var context: Long,   // 0 once its proactor has freed it
+    private val alpnWire: Long,
 ) {
     // Handshakes still running, oldest first. Every entry has the same timeout, so insertion order is deadline
     // order and the sweep stops at the first that has not expired.
@@ -63,6 +64,7 @@ class TlsService private constructor(
      * Throws [IOException] when the handshake fails or the peer goes away during it.
      */
     suspend fun accept(conn: TcpConnection): TlsSession {
+        check(context != 0L) { "This TLS service's proactor has stopped." }
         val ssl = BoringSsl.sslNew(context)
         if (ssl == 0L) {
             throw IOException("SSL_new: ${BoringSsl.lastError()}")
@@ -279,6 +281,25 @@ class TlsService private constructor(
         }
     }
 
+    /**
+     * Frees the context, the ALPN list its callback reads and the kTLS handoff's buffer. The proactor the service started
+     * on calls it last in its teardown, as a handshake may read them until then. A session still open holds its own
+     * reference, so the context goes with the last of them.
+     */
+    internal fun free() {
+        if (context == 0L) {
+            return
+        }
+
+        BoringSsl.ctxFree(context)
+        context = 0L
+        Native.free(alpnWire)
+        if (waiting != 0L) {
+            Native.free(waiting)
+            waiting = 0L
+        }
+    }
+
     companion object {
         private const val KERNEL_TLS_SUITE = "TLS_AES_128_GCM_SHA256"
         private const val MAX_HANDOFF_BYTES = 1L shl 20
@@ -292,12 +313,21 @@ class TlsService private constructor(
             }
         }
 
-        /** Builds [proactor]'s TLS context from [options] and starts its handshake sweep. Call from [Proactor.onStart]. */
+        /**
+         * Builds [proactor]'s TLS context from [options] and starts its handshake sweep. Call from [Proactor.onStart];
+         * the proactor frees it when it stops.
+         */
         fun start(proactor: Proactor, options: TlsOptions): TlsService {
             validate(options)
             val alpnWire = alpnWire(options.alpn)
-            val context = newContext(options, alpnWire)
-            val service = TlsService(proactor, options, context)
+            val context = try {
+                newContext(options, alpnWire)
+            } catch (e: Throwable) {
+                Native.free(alpnWire)   // no context was built to read it
+                throw e
+            }
+            val service = TlsService(proactor, options, context, alpnWire)
+            proactor.ownTlsService(service)
 
             if (options.handshakeTimeoutMs > 0) {
                 proactor.addTicker {
@@ -333,7 +363,7 @@ class TlsService private constructor(
         }
 
         // The protocols as the select callback walks them, in our preference order: a u16 total, then each one as a
-        // length byte and its ASCII name. Lives as long as the process, as the contexts reading it do.
+        // length byte and its ASCII name. Freed with the context reading it, when the proactor stops.
         private fun alpnWire(protocols: List<String>): Long {
             require(protocols.isNotEmpty()) { "At least one ALPN protocol is required." }
 
