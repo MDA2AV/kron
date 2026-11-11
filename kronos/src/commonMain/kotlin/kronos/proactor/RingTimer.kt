@@ -26,7 +26,8 @@ class RingTimer(private val proactor: Proactor) {
 
     /**
      * Suspends for [milliseconds], returning the ring's result: [ETIME] when the wait ran its course (the
-     * success case), any other negative value an errno.
+     * success case), any other negative value an errno - [ECANCELED] when the proactor stopped, which ends a wait
+     * still parked and answers one asked from another thread after it.
      */
     suspend fun delay(milliseconds: Long): Int = delayNanoseconds(milliseconds * 1_000_000L)
 
@@ -50,20 +51,27 @@ class RingTimer(private val proactor: Proactor) {
     // A check that fails in the posted task goes back to the caller: the proactor survives a task that throws, so
     // nothing else would ever resume it.
     private suspend fun delayOffProactor(nanoseconds: Long): Int = suspendCoroutine { cont ->
-        proactor.post {
+        proactor.post(handoff {
             try {
                 check(waiter == null) { "RingTimer already waiting" }
-                proactor.submitTimeout(nanoseconds, completion)
-                waiter = cont
+                if (proactor.postsClosed) {
+                    cont.resume(ECANCELED)   // the proactor has stopped: nothing would ever end the wait
+                } else {
+                    proactor.submitTimeout(nanoseconds, completion)
+                    waiter = cont
+                }
             } catch (e: Throwable) {
                 cont.resumeWithException(e)
             }
-        }
+        })
     }
 
     companion object {
         /** io_uring's report for a timeout that expired normally. */
         const val ETIME = -62
+
+        /** A wait the proactor's stop ended, or one asked of a proactor that had already stopped. */
+        const val ECANCELED = -125
 
         /** True for a result that is the timer expiring rather than an error. */
         fun expired(result: Int): Boolean = result == ETIME || result == 0

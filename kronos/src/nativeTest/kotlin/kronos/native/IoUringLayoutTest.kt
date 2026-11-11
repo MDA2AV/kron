@@ -22,6 +22,7 @@ import kronos.sys.IORING_RECVSEND_POLL_FIRST
 import kronos.sys.IORING_RECV_MULTISHOT
 import kronos.sys.IORING_REGISTER_PBUF_RING
 import kronos.sys.IORING_REGISTER_RING_FDS
+import kronos.sys.IORING_REGISTER_SYNC_CANCEL
 import kronos.sys.IORING_SETUP_CQSIZE
 import kronos.sys.IORING_SETUP_DEFER_TASKRUN
 import kronos.sys.IORING_SETUP_NO_SQARRAY
@@ -44,6 +45,7 @@ import kronos.sys.io_uring_op
 import kronos.sys.io_uring_params
 import kronos.sys.io_uring_rsrc_update
 import kronos.sys.io_uring_sqe
+import kronos.sys.io_uring_sync_cancel_reg
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -108,6 +110,7 @@ class IoUringLayoutTest {
         assertEquals(IORING_UNREGISTER_RING_FDS.toInt(), IoUring.UNREGISTER_RING_FDS)
         assertEquals(IORING_REGISTER_PBUF_RING.toInt(), IoUring.REGISTER_PBUF_RING)
         assertEquals(IORING_UNREGISTER_PBUF_RING.toInt(), IoUring.UNREGISTER_PBUF_RING)
+        assertEquals(IORING_REGISTER_SYNC_CANCEL.toInt(), IoUring.REGISTER_SYNC_CANCEL)
         assertEquals(IOU_PBUF_RING_INC.toInt(), IoUring.IOU_PBUF_RING_INC)
 
         assertEquals(IORING_OFF_SQ_RING.toLong(), IoUring.OFF_SQ_RING)
@@ -123,6 +126,7 @@ class IoUringLayoutTest {
         assertEquals(sizeOf<io_uring_buf_reg>(), IoUring.BUF_REG_SIZE)
         assertEquals(sizeOf<io_uring_rsrc_update>(), IoUring.RSRC_UPDATE_SIZE)
         assertEquals(sizeOf<io_uring_getevents_arg>(), IoUring.GETEVENTS_ARG_SIZE)
+        assertEquals(sizeOf<io_uring_sync_cancel_reg>(), IoUring.SYNC_CANCEL_REG_SIZE)
     }
 
     @Test
@@ -233,6 +237,22 @@ class IoUringLayoutTest {
             arg.ts = 0x0BAD_F00DuL
 
             assertEquals(0x0BAD_F00DL, getLong(a + 16))   // Ring.submitAndWait's timespec pointer
+        }
+
+        withZeroed(IoUring.SYNC_CANCEL_REG_SIZE) { c ->
+            val reg = interpretPointed<io_uring_sync_cancel_reg>(nativeNullPtr + c)
+            reg.addr = 0x0300_0002_0000_0007uL
+            reg.fd = -1
+            reg.flags = 0x55u
+            reg.timeout.tv_sec = 1
+            reg.timeout.tv_nsec = 0x77
+
+            // Proactor.cancelAndWait's writes.
+            assertEquals(0x0300_0002_0000_0007L, getLong(c))
+            assertEquals(-1, getInt(c + 8))
+            assertEquals(0x55, getInt(c + 12))
+            assertEquals(1L, getLong(c + 16))
+            assertEquals(0x77L, getLong(c + 24))
         }
     }
 

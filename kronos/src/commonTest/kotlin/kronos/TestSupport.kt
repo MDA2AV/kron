@@ -44,6 +44,12 @@ internal expect object TestSys {
 
     /** ioctl(TIOCOUTQ): the bytes written and not yet acknowledged by the peer. */
     fun unacknowledged(fd: Int): Int
+
+    /** [newFd] made another number for [oldFd]'s file: [newFd], or a negative errno. */
+    fun dup2(oldFd: Int, newFd: Int): Int
+
+    /** A connected pair of UNIX stream sockets. */
+    fun socketPair(): IntArray
 }
 
 /** A thread running [block], started; joined by [joinTestThread]. */
