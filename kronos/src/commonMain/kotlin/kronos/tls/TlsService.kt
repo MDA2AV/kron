@@ -26,7 +26,7 @@ import kotlin.concurrent.atomics.AtomicInt
 class TlsService private constructor(
     private val proactor: Proactor,
     private val options: TlsOptions,
-    private val context: Long,
+    private var context: Long,   // 0 once its proactor has freed it
 ) {
     // Handshakes still running, oldest first. Every entry has the same timeout, so insertion order is deadline
     // order and the sweep stops at the first that has not expired.
@@ -65,6 +65,7 @@ class TlsService private constructor(
      * Throws [IOException] when the handshake fails or the peer goes away during it.
      */
     suspend fun accept(conn: TcpConnection): TlsSession {
+        check(context != 0L) { "This TLS service's proactor has stopped." }
         val ssl = BoringSsl.sslNew(context)
         if (ssl == 0L) {
             throw IOException("SSL_new: ${BoringSsl.lastError()}")
@@ -281,6 +282,33 @@ class TlsService private constructor(
         }
     }
 
+    /**
+     * Lets go of the context, called by the proactor the service started on, last in its teardown, as a handshake may
+     * read it until then, and frees this service's kTLS handoff buffer. The last service sharing the context frees it
+     * with the ALPN list its callback reads, and a later start with the same options builds another. A session still
+     * open holds its own reference, so the context goes with the last of them.
+     */
+    internal fun free() {
+        if (context == 0L) {
+            return
+        }
+
+        context = 0L
+        if (waiting != 0L) {
+            Native.free(waiting)
+            waiting = 0L
+        }
+
+        shared {
+            if (--options.services == 0) {
+                BoringSsl.ctxFree(options.context)
+                Native.free(options.alpnWire)
+                options.context = 0L
+                options.alpnWire = 0L
+            }
+        }
+    }
+
     companion object {
         private const val KERNEL_TLS_SUITE = "TLS_AES_128_GCM_SHA256"
         private const val MAX_HANDOFF_BYTES = 1L shl 20
@@ -296,11 +324,12 @@ class TlsService private constructor(
 
         /**
          * Starts [proactor]'s TLS service on the context of [options], building it on the first call, and its handshake
-         * sweep. Call from [Proactor.onStart].
+         * sweep. Call from [Proactor.onStart]; the proactor frees it when it stops.
          */
         fun start(proactor: Proactor, options: TlsOptions): TlsService {
             validate(options)
             val service = TlsService(proactor, options, sharedContext(options))
+            proactor.ownTlsService(service)
 
             if (options.handshakeTimeoutMs > 0) {
                 proactor.addTicker {
@@ -311,23 +340,35 @@ class TlsService private constructor(
             return service
         }
 
-        // Taken at startup only, while proactors start side by side.
-        private val building = AtomicInt(0)
+        // Taken at a start and a stop, while proactors start and stop side by side.
+        private val sharing = AtomicInt(0)
 
-        private fun sharedContext(options: TlsOptions): Long {
-            while (!building.compareAndSet(0, 1)) {
+        private inline fun <T> shared(body: () -> T): T {
+            while (!sharing.compareAndSet(0, 1)) {
                 spinWait()
             }
 
             try {
-                if (options.context == 0L) {
-                    options.context = newContext(options, alpnWire(options.alpn))
-                }
-
-                return options.context
+                return body()
             } finally {
-                building.store(0)
+                sharing.store(0)
             }
+        }
+
+        private fun sharedContext(options: TlsOptions): Long = shared {
+            if (options.context == 0L) {
+                val alpnWire = alpnWire(options.alpn)
+                options.context = try {
+                    newContext(options, alpnWire)
+                } catch (e: Throwable) {
+                    Native.free(alpnWire)   // no context was built to read it
+                    throw e
+                }
+                options.alpnWire = alpnWire
+            }
+
+            options.services++
+            options.context
         }
 
         // The combinations that cannot hold are named here rather than resolved by whichever setting runs last.
@@ -355,7 +396,7 @@ class TlsService private constructor(
         }
 
         // The protocols as the select callback walks them, in our preference order: a u16 total, then each one as a
-        // length byte and its ASCII name. Lives as long as the process, as the contexts reading it do.
+        // length byte and its ASCII name. Freed with the context reading it, when the proactor stops.
         private fun alpnWire(protocols: List<String>): Long {
             require(protocols.isNotEmpty()) { "At least one ALPN protocol is required." }
 

@@ -51,6 +51,9 @@ class TlsOptions(
     val kernelTx: Boolean = false,
     val kernelRx: Boolean = false,
 ) {
-    // The context every proactor started with these options shares, built by the first of them (#38).
+    // The context every proactor started with these options shares, built by the first of them with the ALPN list its
+    // callback reads (#38), and freed with it by the last of the services on it to stop (#46). Under TlsService's lock.
     internal var context = 0L
+    internal var alpnWire = 0L
+    internal var services = 0
 }

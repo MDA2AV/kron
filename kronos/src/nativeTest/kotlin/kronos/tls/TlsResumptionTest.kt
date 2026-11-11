@@ -14,6 +14,7 @@ import kronos.boringssl.SSL_SESSION_free
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -71,6 +72,66 @@ class TlsResumptionTest {
         } finally {
             server.close()
         }
+    }
+
+    // #46: the proactors started with one options instance share its context, so one stopping must not free it under
+    // the rest, one started later takes it too, and only the last to stop frees it, so the next start builds its own.
+    // One-proactor servers on one port, as a server's proactors are: with one of them left, it is the one that answers.
+    @Test
+    fun `a stopped proactor leaves its tickets to the rest and a later one shares them until the last stops`() {
+        val options = TlsOptions(certificatePath = TestCertificate.certificate, keyPath = TestCertificate.key)
+        val (first, port) = startOnOnePort(1) { config, ready -> echoServer(config, ready, options) }
+        val servers = arrayListOf(first)
+
+        // The ticket this client holds, offered on each return and kept up to date.
+        var session: CPointer<SSL_SESSION>? = null
+        fun returns(): Boolean = TlsTestClient(port, version = BoringSsl.TLS1_2_VERSION, session = session).use { client ->
+            exchange(client)
+            SSL_SESSION_free(session)
+            session = client.session()
+            client.resumed
+        }
+
+        try {
+            servers += startOn(port, options)
+            assertFalse(returns(), "the first connection resumed a ticket it was never issued")
+
+            servers[0].close()
+            assertTrue(returns(), "the proactor left did not resume the ticket, so it lost the context it shared")
+
+            servers += startOn(port, options)
+            servers[1].close()
+            assertTrue(returns(), "a proactor started later did not resume the ticket, so it did not share the context")
+
+            servers[2].close()
+            servers += startOn(port, options)
+            assertFalse(returns(), "a ticket from a context its last proactor freed resumed, so it was never rebuilt")
+        } finally {
+            SSL_SESSION_free(session)
+            servers.forEach(KronosServer::close)
+        }
+    }
+
+    private fun startOn(port: Int, options: TlsOptions): KronosServer {
+        val ready = Latch(1)
+        val server = echoServer(ServerConfig(proactorCount = 1, ringEntries = 256, tcp = TcpOptions(port = port)), ready, options)
+        server.start()
+        assertTrue(ready.await(10_000), "a proactor never started")
+        return server
+    }
+
+    private fun echoServer(config: ServerConfig, ready: Latch, options: TlsOptions): KronosServer {
+        val services = arrayOfNulls<TlsService>(config.proactorCount)
+        return KronosServer(
+            config,
+            onStart = { proactor ->
+                services[proactor.id] = TlsService.start(proactor, options)
+                ready.countDown()
+            },
+            handler = { conn ->
+                echo(conn, services[conn.proactor.id]!!)
+            },
+        )
     }
 
     private fun exchange(client: TlsTestClient) {

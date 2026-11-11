@@ -1,5 +1,6 @@
 package kronos
 
+import kronos.tls.TlsService
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.coroutines.Continuation
@@ -455,6 +456,13 @@ class Proactor(val id: Int, private val config: ServerConfig) {
         tickers.add(ticker)
     }
 
+    // Every TLS service started on this proactor: teardown frees them last.
+    private var tlsServices: ArrayList<TlsService>? = null
+
+    internal fun ownTlsService(service: TlsService) {
+        (tlsServices ?: ArrayList<TlsService>().also { tlsServices = it }).add(service)
+    }
+
     // Checked on every pass, not left to the wait running out: a busy proactor's wait never does.
     private fun runDueTickers() {
         if (nowMs < nextTickMs) {
@@ -620,6 +628,9 @@ class Proactor(val id: Int, private val config: ServerConfig) {
             // rather than waiting forever.
             postsClosed = true
             drainStopped()
+
+            // After all that could still run here, since until then a handshake may read a TLS service's context.
+            tlsServices?.forEach(TlsService::free)
         }
     }
 
