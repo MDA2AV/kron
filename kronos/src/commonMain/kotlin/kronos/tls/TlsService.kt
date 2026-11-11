@@ -11,6 +11,8 @@ import kronos.putByte
 import kronos.putShort
 import kronos.IOException
 import kronos.readFileBytes
+import kronos.spinWait
+import kotlin.concurrent.atomics.AtomicInt
 
 /**
  * One proactor's TLS termination. [accept] runs the handshake through BoringSSL memory BIOs, its bytes riding
@@ -18,14 +20,13 @@ import kronos.readFileBytes
  * there. BoringSSL owns both directions by default; kernel TLS is opt-in per direction ([TlsOptions.kernelTx],
  * [TlsOptions.kernelRx]) and the handoff happens here, right after the handshake.
  *
- * Start one per proactor from [Proactor.onStart], so the context and its ticket keys belong to the thread that
- * uses them; a ticket resumes on the proactor that issued it.
+ * Start one per proactor from [Proactor.onStart]. Every proactor started with the same [TlsOptions] instance shares
+ * one context, built by the first to start, so a ticket one of them issued resumes on any other.
  */
 class TlsService private constructor(
     private val proactor: Proactor,
     private val options: TlsOptions,
     private var context: Long,   // 0 once its proactor has freed it
-    private val alpnWire: Long,
 ) {
     // Handshakes still running, oldest first. Every entry has the same timeout, so insertion order is deadline
     // order and the sweep stops at the first that has not expired.
@@ -282,21 +283,29 @@ class TlsService private constructor(
     }
 
     /**
-     * Frees the context, the ALPN list its callback reads and the kTLS handoff's buffer. The proactor the service started
-     * on calls it last in its teardown, as a handshake may read them until then. A session still open holds its own
-     * reference, so the context goes with the last of them.
+     * Lets go of the context, called by the proactor the service started on, last in its teardown, as a handshake may
+     * read it until then, and frees this service's kTLS handoff buffer. The last service sharing the context frees it
+     * with the ALPN list its callback reads, and a later start with the same options builds another. A session still
+     * open holds its own reference, so the context goes with the last of them.
      */
     internal fun free() {
         if (context == 0L) {
             return
         }
 
-        BoringSsl.ctxFree(context)
         context = 0L
-        Native.free(alpnWire)
         if (waiting != 0L) {
             Native.free(waiting)
             waiting = 0L
+        }
+
+        shared {
+            if (--options.services == 0) {
+                BoringSsl.ctxFree(options.context)
+                Native.free(options.alpnWire)
+                options.context = 0L
+                options.alpnWire = 0L
+            }
         }
     }
 
@@ -314,19 +323,12 @@ class TlsService private constructor(
         }
 
         /**
-         * Builds [proactor]'s TLS context from [options] and starts its handshake sweep. Call from [Proactor.onStart];
-         * the proactor frees it when it stops.
+         * Starts [proactor]'s TLS service on the context of [options], building it on the first call, and its handshake
+         * sweep. Call from [Proactor.onStart]; the proactor frees it when it stops.
          */
         fun start(proactor: Proactor, options: TlsOptions): TlsService {
             validate(options)
-            val alpnWire = alpnWire(options.alpn)
-            val context = try {
-                newContext(options, alpnWire)
-            } catch (e: Throwable) {
-                Native.free(alpnWire)   // no context was built to read it
-                throw e
-            }
-            val service = TlsService(proactor, options, context, alpnWire)
+            val service = TlsService(proactor, options, sharedContext(options))
             proactor.ownTlsService(service)
 
             if (options.handshakeTimeoutMs > 0) {
@@ -336,6 +338,37 @@ class TlsService private constructor(
             }
 
             return service
+        }
+
+        // Taken at a start and a stop, while proactors start and stop side by side.
+        private val sharing = AtomicInt(0)
+
+        private inline fun <T> shared(body: () -> T): T {
+            while (!sharing.compareAndSet(0, 1)) {
+                spinWait()
+            }
+
+            try {
+                return body()
+            } finally {
+                sharing.store(0)
+            }
+        }
+
+        private fun sharedContext(options: TlsOptions): Long = shared {
+            if (options.context == 0L) {
+                val alpnWire = alpnWire(options.alpn)
+                options.context = try {
+                    newContext(options, alpnWire)
+                } catch (e: Throwable) {
+                    Native.free(alpnWire)   // no context was built to read it
+                    throw e
+                }
+                options.alpnWire = alpnWire
+            }
+
+            options.services++
+            options.context
         }
 
         // The combinations that cannot hold are named here rather than resolved by whichever setting runs last.

@@ -14,6 +14,7 @@ enum class TlsProtocolVersion {
 
 /**
  * One TLS port's settings; [TlsService.start] takes them per proactor and refuses the combinations that cannot hold.
+ * Hand the same instance to every proactor: they then share one context, so a session ticket resumes on any of them.
  *
  * @property certificatePath PEM certificate chain file, leaf first. Exactly one of this and [certificatePem].
  * @property keyPath PEM private key file. Exactly one of this and [keyPem].
@@ -49,4 +50,10 @@ class TlsOptions(
     val cipherList: String? = null,
     val kernelTx: Boolean = false,
     val kernelRx: Boolean = false,
-)
+) {
+    // The context every proactor started with these options shares, built by the first of them with the ALPN list its
+    // callback reads (#38), and freed with it by the last of the services on it to stop (#46). Under TlsService's lock.
+    internal var context = 0L
+    internal var alpnWire = 0L
+    internal var services = 0
+}

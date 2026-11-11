@@ -16,6 +16,7 @@ import kronos.TcpPipeWriter
 import kronos.checkFromIndexSize
 import kronos.copyFromArray
 import kronos.copyMemory
+import kronos.handoff
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
@@ -172,8 +173,14 @@ class TlsDecryptingPipeReader(
     }
 
     private suspend fun readOffProactor(): ReadResult = suspendCoroutine { cont ->
-        connection.proactor.post {
+        connection.proactor.post(handoff {
             try {
+                // Run here once the proactor has stopped: what this reader holds, then the end, without reaching the
+                // session, whose BoringSSL is the proactor's.
+                if (connection.proactor.postsClosed) {
+                    ended = true
+                }
+
                 val r = readOrPark(cont)
                 if (r !== COROUTINE_SUSPENDED) {
                     cont.resume(r as ReadResult)
@@ -181,7 +188,7 @@ class TlsDecryptingPipeReader(
             } catch (e: Throwable) {
                 cont.resumeWithException(e)
             }
-        }
+        })
     }
 
     // The connection's read completed while a caller was parked - inline on the proactor.
@@ -477,8 +484,14 @@ class TlsEncryptingPipeWriter(
     }
 
     private suspend fun flushOffProactor(): FlushResult = suspendCoroutine { cont ->
-        connection.proactor.post {
+        connection.proactor.post(handoff {
             try {
+                // Run here once the proactor has stopped: what is staged is dropped unencrypted, as on a closed
+                // connection, BoringSSL being the proactor's.
+                if (connection.proactor.postsClosed) {
+                    staged = 0
+                }
+
                 val r = flushOrPark(cont)
                 if (r !== COROUTINE_SUSPENDED) {
                     cont.resume(r as FlushResult)
@@ -486,7 +499,7 @@ class TlsEncryptingPipeWriter(
             } catch (e: Throwable) {
                 cont.resumeWithException(e)
             }
-        }
+        })
     }
 
     // The connection's flush completed - inline on the proactor. A closed connection reads as completed, so a

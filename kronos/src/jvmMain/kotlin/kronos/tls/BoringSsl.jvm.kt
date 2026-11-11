@@ -16,8 +16,6 @@ import java.lang.invoke.MethodHandle
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
-import javax.crypto.Mac
-import javax.crypto.spec.SecretKeySpec
 
 /**
  * The BoringSSL surface TLS needs, through FFM: libssl and libcrypto in one shared object, libkronos_boringssl.so, which
@@ -148,6 +146,10 @@ internal actual object BoringSsl {
     private val ERR_GET_ERROR = bind("ERR_get_error", FunctionDescriptor.of(I))
     private val ERR_PEEK_ERROR = bind("ERR_peek_error", FunctionDescriptor.of(I))
     private val ERR_ERROR_STRING_N = bind("ERR_error_string_n", FunctionDescriptor.ofVoid(I, L, L))
+
+    // On the arrays themselves, as on native: Mac and SecretKeySpec would leave copies of the key on the heap.
+    private val EVP_SHA256 = bind("EVP_sha256", FunctionDescriptor.of(L), leaf)
+    private val HMAC = bind("HMAC", FunctionDescriptor.of(L, L, ADDRESS, L, ADDRESS, L, ADDRESS, ADDRESS), Linker.Option.critical(true))
 
     actual fun serverMethod(): Long = TLS_SERVER_METHOD.invokeExact() as Long
     actual fun ctxNew(method: Long): Long = SSL_CTX_NEW.invokeExact(method) as Long
@@ -327,11 +329,22 @@ internal actual object BoringSsl {
         return message
     }
 
-    actual fun cString(address: Long): String = MEM.getString(address)
+    private fun cString(address: Long): String = MEM.getString(address)
 
     private inline fun <T> withCString(text: String, body: (Long) -> T): T =
         Arena.ofConfined().use { arena -> body(arena.allocateFrom(text).address()) }
 
-    actual fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray =
-        Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(key, "HmacSHA256")) }.doFinal(data)
+    /** HMAC-SHA256 of [data] under [key], for the kTLS key schedule. */
+    actual fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray {
+        val out = ByteArray(32)
+        val length = IntArray(1)
+        val ok = HMAC.invokeExact(
+            EVP_SHA256.invokeExact() as Long,
+            MemorySegment.ofArray(key), key.size.toLong(),
+            MemorySegment.ofArray(data), data.size.toLong(),
+            MemorySegment.ofArray(out), MemorySegment.ofArray(length),
+        ) as Long
+        check(ok != 0L) { "HMAC-SHA256 failed: ${lastError()}" }
+        return out
+    }
 }

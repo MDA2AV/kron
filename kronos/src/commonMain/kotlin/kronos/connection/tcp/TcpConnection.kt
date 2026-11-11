@@ -15,7 +15,8 @@ import kotlin.coroutines.suspendCoroutine
  * The handler runs on the proactor's thread, and so does everything here: a suspending call made from another
  * thread is carried over with [Proactor.post] and resumes the caller where it was, so none of the state below
  * races the proactor and none of it needs atomics. The recv queue is the exception - its consumer may be on
- * any thread - and so is [isClosed].
+ * any thread - and so is [isClosed]. Once the proactor has stopped, such a call is answered where it is made, the
+ * connection closed: see [Proactor.stop].
  *
  * Reading: [read] waits for data, [tryGetItem] takes each received buffer, [returnBuffer] hands it back.
  * Writing: [write] or [getBuffer] + [advance] stage bytes, [flush] sends them and waits until the kernel has
@@ -31,7 +32,7 @@ class TcpConnection internal constructor(
     /** The proactor this connection belongs to; its handler runs on that proactor's thread. */
     val proactor: Proactor get() = tcp.proactor
 
-    /** The accepted socket. The proactor owns it and closes it at recycle. */
+    /** The accepted socket. The proactor owns it and closes it at recycle, or when it stops. */
     var clientFd: Int = fd
         private set
 
@@ -108,7 +109,8 @@ class TcpConnection internal constructor(
 
     /**
      * Waits for received data. Returns at once when something is already queued or the connection is closed;
-     * otherwise suspends until the next recv completion, or the close.
+     * otherwise suspends until the next recv completion, or the close. A stop of the proactor closes the connection,
+     * so from another thread after it this returns closed at once.
      *
      * Take the items with [tryGetItem]; each one with a buffer must be handed back with [returnBuffer]. One
      * read at a time. The snapshot is the connection's own, valid until the next read.
@@ -142,7 +144,7 @@ class TcpConnection internal constructor(
     // A check that fails in the posted task goes back to the caller: the proactor survives a task that throws, so
     // nothing else would ever resume it.
     private suspend fun readOffProactor(): RecvSnapshot = suspendCoroutine { cont ->
-        tcp.proactor.post {
+        tcp.proactor.post(handoff {
             try {
                 val result = readOrPark(cont)
                 if (result !== COROUTINE_SUSPENDED) {
@@ -151,7 +153,7 @@ class TcpConnection internal constructor(
             } catch (e: Throwable) {
                 cont.resumeWithException(e)
             }
-        }
+        })
     }
 
     /**
@@ -365,7 +367,8 @@ class TcpConnection internal constructor(
      * resubmitted) - not for the peer's ACK. One flush at a time, and no writes while it is out.
      *
      * A connection already closed drops what is staged and returns; one that fails while sending also returns
-     * normally, so check [isClosed] (or the next read's snapshot) to learn of it.
+     * normally, so check [isClosed] (or the next read's snapshot) to learn of it. A stop of the proactor closes the
+     * connection too: a flush it finds parked returns once the kernel is done with the send.
      */
     suspend fun flush() {
         if (!tcp.proactor.onProactorThread) {
@@ -403,7 +406,7 @@ class TcpConnection internal constructor(
 
     // As readOffProactor: a failed check is the caller's exception, not a hang.
     private suspend fun flushOffProactor(): Unit = suspendCoroutine { cont ->
-        tcp.proactor.post {
+        tcp.proactor.post(handoff {
             try {
                 if (flushOrPark(cont) !== COROUTINE_SUSPENDED) {
                     cont.resume(Unit)
@@ -411,7 +414,7 @@ class TcpConnection internal constructor(
             } catch (e: Throwable) {
                 cont.resumeWithException(e)
             }
-        }
+        })
     }
 
     // The connection is torn down, so nothing will ever send the staged bytes; keeping them would make a writer

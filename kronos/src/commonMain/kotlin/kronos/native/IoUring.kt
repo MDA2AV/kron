@@ -63,6 +63,7 @@ internal object IoUring {
     const val UNREGISTER_RING_FDS = 21
     const val REGISTER_PBUF_RING = 22
     const val UNREGISTER_PBUF_RING = 23
+    const val REGISTER_SYNC_CANCEL = 24
 
     // provided-buffer ring registration flags (io_uring_buf_reg.flags)
     const val IOU_PBUF_RING_INC = 2
@@ -94,6 +95,10 @@ internal object IoUring {
 
     // struct io_uring_getevents_arg (24 bytes): sigmask u64, sigmask_sz u32, min_wait_usec u32, ts u64
     const val GETEVENTS_ARG_SIZE = 24L
+
+    // struct io_uring_sync_cancel_reg (64 bytes): addr u64, fd s32, flags u32, timeout __kernel_timespec at 16, the
+    // rest zero
+    const val SYNC_CANCEL_REG_SIZE = 64L
 
     /**
      * Fills all 64 bytes of an SQE in eight stores: whatever an earlier use left there is overwritten,

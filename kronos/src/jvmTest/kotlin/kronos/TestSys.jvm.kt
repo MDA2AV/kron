@@ -28,6 +28,11 @@ internal actual object TestSys {
         "ioctl", FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_LONG), Linker.Option.firstVariadicArg(2), captureErrno,
     )
 
+    private val DUP2 = bind("dup2", FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT), captureErrno)
+    private val SOCKETPAIR = bind(
+        "socketpair", FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG), captureErrno,
+    )
+
     // SIOCOUTQ: bytes written and not yet acknowledged (asm-generic/ioctls.h).
     private const val TIOCOUTQ = 0x5411L
 
@@ -48,6 +53,24 @@ internal actual object TestSys {
         val state = threadState.get()
         val n = RECV.invokeExact(state, fd, buffer, length, flags) as Long
         return if (n < 0) -errno(state).toLong() else n
+    }
+
+    actual fun dup2(oldFd: Int, newFd: Int): Int {
+        val state = threadState.get()
+        val rc = DUP2.invokeExact(state, oldFd, newFd) as Int
+        return if (rc < 0) -errno(state) else rc
+    }
+
+    actual fun socketPair(): IntArray {
+        val state = threadState.get()
+        val fds = Native.malloc(8)
+        try {
+            val rc = SOCKETPAIR.invokeExact(state, 1, 1, 0, fds) as Int   // AF_UNIX, SOCK_STREAM
+            check(rc == 0) { "socketpair failed with errno ${errno(state)}" }
+            return intArrayOf(getInt(fds), getInt(fds + 4))
+        } finally {
+            Native.free(fds)
+        }
     }
 
     actual fun unacknowledged(fd: Int): Int {

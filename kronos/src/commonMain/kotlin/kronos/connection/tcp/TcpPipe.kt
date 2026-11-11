@@ -110,7 +110,7 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
     }
 
     private suspend fun readOffProactor(): ReadResult = suspendCoroutine { cont ->
-        connection.proactor.post {
+        connection.proactor.post(handoff {
             try {
                 val r = readOrPark(cont)
                 if (r !== COROUTINE_SUSPENDED) {
@@ -119,7 +119,7 @@ class TcpPipeReader(private val connection: TcpConnection) : PipeReader, RecvBuf
             } catch (e: Throwable) {
                 cont.resumeWithException(e)
             }
-        }
+        })
     }
 
     // The connection's read completed while a caller was parked - inline on the proactor.
@@ -312,7 +312,7 @@ class TcpPipeWriter(private val connection: TcpConnection) : PipeWriter {
     }
 
     private suspend fun flushOffProactor(): FlushResult = suspendCoroutine { cont ->
-        connection.proactor.post {
+        connection.proactor.post(handoff {
             try {
                 val r = flushOrPark(cont)
                 if (r !== COROUTINE_SUSPENDED) {
@@ -321,7 +321,7 @@ class TcpPipeWriter(private val connection: TcpConnection) : PipeWriter {
             } catch (e: Throwable) {
                 cont.resumeWithException(e)
             }
-        }
+        })
     }
 
     // The connection's flush completed - inline on the proactor. A closed connection reads as completed, as on

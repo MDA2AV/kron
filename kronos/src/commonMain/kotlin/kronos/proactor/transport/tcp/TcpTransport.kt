@@ -57,6 +57,9 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
                 Native.close(fd)
             }
         }
+
+        // So a handler the teardown wakes, calling stopAccepting, does not close these numbers again.
+        accepting = false
     }
 
     // False once stopAccepting ran: no accept is re-armed, and the listeners are closed.
@@ -137,6 +140,11 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
         }
 
         while (!returnQ.offer(value)) {
+            // A stopped proactor drains nothing, and its buffers go with it.
+            if (proactor.postsClosed) {
+                return
+            }
+
             spinWait()
         }
 
@@ -587,17 +595,25 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
 
         Native.close(fd)
 
-        // Its own ring, in incremental mode: unregistered now, its gid free for the next accept. The cancel above
-        // goes in with the next enter, ahead of any task work there that could still select from the ring.
+        // The cancel above goes in with the next enter, ahead of any task work there that could still select from the
+        // connection's own ring.
+        releaseOwnRing(conn)
+        conn.clear()
+        openConnections--
+        returnToPool(conn)
+    }
+
+    // Its own ring, in incremental mode: unregistered now, its gid free for the next accept.
+    private fun releaseOwnRing(conn: TcpConnection) {
         val ring = conn.ring
         if (ring != null) {
             freeGids[freeGidCount++] = ring.bgid
             ring.unregister()
         }
+    }
 
-        conn.clear()
-        openConnections--
-
+    // A cleared connection: kept for the next accept, or its memory freed right here once the pool is full.
+    private fun returnToPool(conn: TcpConnection) {
         if (pool.size < options.poolMax) {
             pool.addLast(conn)
         } else {
@@ -683,8 +699,9 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
 
     // ---- Teardown ---------------------------------------------------------------------------------------
 
-    // Live connections' sockets are closed, never their objects: a handler may still write to them.
-    fun closeAcceptedSockets() {
+    // Before any socket closes (#29): a read parked on a live connection wakes, its handler unwinding while the number
+    // is still its own, and a flush started after it, on any connection, sends nothing.
+    fun markAcceptedConnectionsClosed() {
         val conns = connections
 
         for (fd in conns.indices) {
@@ -692,8 +709,50 @@ internal class TcpTransport(val proactor: Proactor, private val config: ServerCo
 
             // A handler letting go later must not shut down whatever socket gets the number next.
             conn.suppressFin()
-            Native.close(fd)
+            conn.markClosed()
+        }
+    }
+
+    // Live connections' sockets are closed, never their objects: a handler may still write to them.
+    fun closeAcceptedSockets() {
+        val conns = connections
+
+        for (fd in conns.indices) {
+            if (conns[fd] != null) {
+                Native.close(fd)
+            }
+        }
+    }
+
+    // A flush the kernel had ends only once the kernel is done with its send. Not finishSend: with closeAfterSend set,
+    // it would recycle the connection, closing its socket's number a second time.
+    fun releaseAcceptedConnections(canCancel: Boolean) {
+        val conns = connections
+
+        for (fd in conns.indices) {
+            val conn = conns[fd] ?: continue
+            val sendTag = tag(KIND_TCP_SEND, conn.generation and 0xFFFF, fd)
+            if (canCancel && conn.flushSubmitted && proactor.cancelAndWait(sendTag)) {
+                conn.completeFlush()
+            }
+        }
+    }
+
+    // Once every wake is done, while the ring is open: a connection its handler let go of goes back to the pool as a
+    // recycle would, and the teardown's last step frees it. One a handler still holds, or whose send the kernel may
+    // still be reading, keeps its memory, as a write into it would land in freed memory.
+    fun returnReleasedConnections() {
+        val conns = connections
+
+        for (fd in conns.indices) {
+            val conn = conns[fd] ?: continue
             conns[fd] = null
+
+            if (conn.handlerReleased && !conn.flushSubmitted) {
+                releaseOwnRing(conn)
+                conn.clear()
+                returnToPool(conn)
+            }
         }
     }
 
