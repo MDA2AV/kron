@@ -36,6 +36,7 @@ import kronos.boringssl.PEM_write_bio_PrivateKey
 import kronos.boringssl.PEM_write_bio_X509
 import kronos.boringssl.SSL
 import kronos.boringssl.SSL_CTX
+import kronos.boringssl.SSL_SESSION
 import kronos.boringssl.SSL_CTX_free
 import kronos.boringssl.SSL_CTX_get_cert_store
 import kronos.boringssl.SSL_CTX_new
@@ -212,6 +213,7 @@ class TlsTestClient(
     port: Int,
     version: Short = BoringSsl.TLS1_3_VERSION,
     alpn: List<String> = listOf("http/1.1"),
+    session: CPointer<SSL_SESSION>? = null,
 ) : AutoCloseable {
     private val socket = TestSocket()
     private val ctx: CPointer<SSL_CTX>
@@ -230,6 +232,9 @@ class TlsTestClient(
         ssl = SSL_new(ctx) ?: error("SSL_new failed")
         SSL_set_fd(ssl, socket.fd)
         offer(alpn)
+        if (session != null) {
+            kronos.boringssl.SSL_set_session(ssl, session)   // offered in the ClientHello, to resume
+        }
 
         val deadline = Clock.monotonicMs() + TIMEOUT_MS
         while (true) {
@@ -245,6 +250,14 @@ class TlsTestClient(
             }
         }
     }
+
+    /** Whether the handshake resumed the session this client was given. */
+    val resumed: Boolean
+        get() = kronos.boringssl.SSL_session_reused(ssl) == 1
+
+    /** This connection's session, for a later client to resume; free it with SSL_SESSION_free. TLS 1.2 only: a 1.3 one
+     * is not resumable until a ticket arrives, after the handshake. */
+    fun session(): CPointer<SSL_SESSION>? = kronos.boringssl.SSL_get1_session(ssl)
 
     /** What ALPN settled on, or "" when nothing. */
     val applicationProtocol: String
