@@ -3,7 +3,9 @@ package kronos
 /**
  * One proactor's settings; every proactor of a server takes the same instance.
  *
- * @property proactorCount how many proactors [KronosServer] starts, one thread and one ring each.
+ * @property proactorCount how many proactors [KronosServer] starts, one thread and one ring each, with receive buffers
+ *   of its own: [recvSlots] x [recvBufferSize], 128 MiB by default, which even a few connections come to touch. One by
+ *   default; set it for more, such as one per CPU the process may use.
  * @property pinProactors each proactor runs alone on one CPU: proactor i on the i-th CPU its thread may run on (the
  *   starting thread's affinity, which a container's cpuset or taskset narrows). Unpinned, the scheduler can stack
  *   two proactors on one CPU while another idles. More proactors than CPUs is refused at [KronosServer.start].
@@ -16,7 +18,7 @@ package kronos
  *   [IncrementalOptions]; null shares one, from [recvSlots] buffers of [recvBufferSize] bytes.
  */
 class ServerConfig(
-    val proactorCount: Int = 12,
+    val proactorCount: Int = 1,
     val pinProactors: Boolean = false,
     val ringEntries: Int = 8192,
     val recvBufferSize: Int = 32 * 1024,
